@@ -1,0 +1,87 @@
+╔══════════════════════════════════════════════════════════════╗
+║              RentaFlow — Gestão de Dividendos                ║
+║                     Bem-vindo ao produto!                    ║
+╚══════════════════════════════════════════════════════════════╝
+
+Obrigado por adquirir o RentaFlow!
+Este pacote contém tudo que você precisa para automatizar
+o controle dos seus FIIs e ações com foco em renda passiva.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ CONTEÚDO DO PACOTE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  📁 Gestao_Dividendos.exe    → Aplicativo principal
+  📊 RentaFlow_Planilha.xlsx  → Sua planilha de investimentos
+  📖 Manual_RentaFlow.docx    → Manual completo do usuário
+  📄 LEIA-ME.txt              → Este arquivo
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ PRIMEIROS PASSOS (5 minutos)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Coloque todos os arquivos desta pasta em um local fixo
+     (ex: C:\Documentos\RentaFlow)
+     ⚠ Não mova os arquivos depois de configurar!
+
+  2. Execute o Gestao_Dividendos.exe
+
+  3. Clique em "⚙ Configurações" no rodapé da tela principal
+
+  4. Preencha os 4 campos:
+     • Arquivo Excel  → selecione o RentaFlow_Planilha.xlsx
+     • Senha dos PDFs → os 3 primeiros dígitos do seu CPF
+     • Pasta de Notas → pasta onde salvará as notas de corretagem
+     • Janela de busca → deixe 365 (padrão)
+
+  5. Clique em "Salvar configuração" — pronto!
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MÓDULOS DO APLICATIVO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. Atualizar Cotações          → preços, DY, P/VP e Short Name
+  2. Importar Notas de Corretagem → operações importadas dos PDFs
+  3. Buscar Dividendos Recebidos  → proventos registrados na planilha
+  4. Smart Aporte                → boleta de compra calculada
+  5. Relatório de IR             → planilha fiscal gerada
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ ROTINA MENSAL RECOMENDADA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  1. [Módulo 1] Atualizar Cotações     → preços e DY atualizados
+  2. [Módulo 2] Importar Notas         → registre as operações do mês
+  3. [Módulo 3] Buscar Dividendos      → proventos do mês registrados
+  4. Abra a planilha (botão 📊) e salve (Ctrl+S) para recalcular
+  5. [Módulo 4] Smart Aporte           → calcule a boleta do mês
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ DICA: PRIMEIRA CONFIGURAÇÃO DO CATÁLOGO
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Na primeira vez, rode o Módulo 1 no modo "Catálogo completo B3"
+  para popular os Short Names dos ativos (coluna I da aba Dados B3).
+  Isso permite que o Módulo 2 resolva automaticamente os tickers
+  pelo nome de pregão da nota (ex: BRADESCO PN N1 → BBDC4).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ REQUISITOS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  • Windows 10 ou superior (64 bits)
+  • Microsoft Excel 2016 ou superior
+  • Conexão com a internet
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ DÚVIDAS E SUPORTE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Consulte o Manual_RentaFlow.docx para instruções detalhadas,
+  resolução de problemas e perguntas frequentes.
+
+  Suporte: (31) 98235-6868
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ RentaFlow v1.0  |  Desenvolvido por Cecília Ribeiro
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
