@@ -1,0 +1,24 @@
+# Dados sensíveis
+config.json
+*.xlsx
+*.xlsm
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# Build
+dist/
+build/
+*.spec
+*.exe
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Backups e PDFs pessoais
+Backups/
+Notas_Corretagem/
