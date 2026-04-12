@@ -4,6 +4,7 @@ main.py — Ponto de entrada da API RentaFlow v2.0
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
+from .routers import ativos, carteira, operacoes, dividendos, aportes
 
 settings = get_settings()
 
@@ -28,6 +29,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Registra todos os routers
+app.include_router(ativos.router,     prefix="/api")
+app.include_router(carteira.router,   prefix="/api")
+app.include_router(operacoes.router,  prefix="/api")
+app.include_router(dividendos.router, prefix="/api")
+app.include_router(aportes.router,    prefix="/api")
+
 
 @app.get("/")
 async def root():
@@ -36,6 +44,13 @@ async def root():
         "version": settings.APP_VERSION,
         "status": "online",
         "docs": "/docs",
+        "endpoints": [
+            "/api/ativos",
+            "/api/carteira",
+            "/api/operacoes",
+            "/api/dividendos",
+            "/api/aportes",
+        ],
     }
 
 
