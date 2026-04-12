@@ -22,3 +22,9 @@ Thumbs.db
 # Backups e PDFs pessoais
 Backups/
 Notas_Corretagem/
+
+# Arquivos sensíveis — nunca enviar
+senha*
+Client
+*.key
+*.pem
