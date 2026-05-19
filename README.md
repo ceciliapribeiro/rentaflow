@@ -1,28 +1,32 @@
-# RentaFlow — Gestão de Dividendos
+# RentaFlow v2.0 — Gestão de Renda Passiva
 
-Sistema de automação para controle de FIIs e ações com foco em renda passiva.
+Sistema web para controle de investimentos em FIIs, ações e BDRs com foco em renda passiva.
 
-## Módulos
+## 🚀 Stack
 
-| # | Módulo | Descrição |
-|---|--------|-----------|
-| 1 | Atualizar Cotações | Preços, DY, P/VP via Yahoo Finance e Status Invest |
-| 2 | Importar Notas | Leitura de PDFs de corretagem (Clear/XP) |
-| 3 | Buscar Dividendos | Proventos com custódia D+2 automática |
-| 4 | Smart Aporte | Boleta de compra/venda inteligente |
-| 5 | Relatório de IR | Bens e Direitos + Rendimentos para IRPF |
+- **Frontend:** React + Vite + TailwindCSS
+- **Backend:** Supabase (PostgreSQL + Auth + Edge Functions)
+- **Cotações:** Yahoo Finance (via Edge Function em Deno)
+- **Catálogo:** B3 (importação via Excel)
 
-## Versões
+## 📋 Módulos
 
-- **v1.0** — Desktop (Tkinter + Excel) — `v1-desktop/`
-- **v2.0** — Web SaaS (em desenvolvimento) — `backend/` + `frontend/`
+| # | Módulo | Status |
+|---|---|---|
+| ✅ | Importação de carteira (Operações/Aportes/Dividendos) | Pronto |
+| ✅ | Catálogo B3 (1500+ ativos) | Pronto |
+| ✅ | Dashboard com Patrimônio/DY/P/VP | Pronto |
+| ✅ | Atualização de Cotações (Yahoo Finance) | Pronto |
+| ⏳ | Importar Notas PDF | Em desenvolvimento |
+| ⏳ | Buscar Dividendos (Fundamentus) | Em desenvolvimento |
+| ⏳ | Smart Aporte | Em desenvolvimento |
+| ⏳ | Relatório de IR | Em desenvolvimento |
 
-## Tecnologias
+## 🛠 Como rodar localmente
 
-**v1.0:** Python, Tkinter, openpyxl, yfinance, pdfplumber, BeautifulSoup
+```bash
+# 1. Clone o repositório
+git clone https://github.com/SEU_USUARIO/rentaflow.git
+cd rentaflow/frontend
 
-**v2.0:** FastAPI, React, PostgreSQL (Supabase), Tailwind CSS
-
-## Desenvolvido por
-
-Cecília Ribeiro
+Desenvolvido por Cecília Ribeiro
