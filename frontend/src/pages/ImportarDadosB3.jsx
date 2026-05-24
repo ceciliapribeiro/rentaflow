@@ -10,7 +10,6 @@ import { processarDadosB3 } from '../utils/importarDadosB3'
 
 export default function ImportarDadosB3() {
   const navigate = useNavigate()
-
   const [arquivo, setArquivo] = useState(null)
   const [dadosProcessados, setDadosProcessados] = useState(null)
   const [statsBruto, setStatsBruto] = useState(null)
@@ -26,37 +25,29 @@ export default function ImportarDadosB3() {
     setErro(null)
     setResultado(null)
     setDadosProcessados(null)
-
     const reader = new FileReader()
     reader.onload = (evt) => {
       try {
         const wb = XLSX.read(evt.target.result, { type: 'binary', cellDates: true })
-
         const abaB3 = wb.SheetNames.find(n => {
           const norm = n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
           return norm.includes('dados b3') || norm === 'dados b3' || norm.includes('dadosb3')
         })
-
         if (!abaB3) {
-          setErro(`Aba "Dados B3" não encontrada. Abas detectadas: ${wb.SheetNames.join(', ')}`)
+          setErro(`Aba "Dados B3" não encontrada. Abas: ${wb.SheetNames.join(', ')}`)
           return
         }
-
         const ws = wb.Sheets[abaB3]
         const jsonData = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false })
-
         if (jsonData.length === 0) {
           setErro('A aba "Dados B3" está vazia.')
           return
         }
-
         const { dados, stats } = processarDadosB3(jsonData)
-
         if (dados.length === 0) {
-          setErro('Nenhum ativo válido encontrado na aba "Dados B3".')
+          setErro('Nenhum ativo válido encontrado.')
           return
         }
-
         setDadosProcessados(dados)
         setStatsBruto(stats)
       } catch (err) {
@@ -69,19 +60,15 @@ export default function ImportarDadosB3() {
 
   const handleImportar = async () => {
     if (!dadosProcessados || dadosProcessados.length === 0) return
-
     setImportando(true)
     setErro(null)
     setProgresso({ atual: 0, total: dadosProcessados.length })
-
     let sucesso = 0
     let erros = 0
     const errosDetalhe = []
-
     const LOTE = 100
     for (let i = 0; i < dadosProcessados.length; i += LOTE) {
       const lote = dadosProcessados.slice(i, i + LOTE)
-
       const loteLimpo = lote.map(item => {
         const obj = { ticker: item.ticker, tipo: item.tipo }
         if (item.razao_social) obj.razao_social = item.razao_social
@@ -93,16 +80,11 @@ export default function ImportarDadosB3() {
         if (item.short_name) obj.short_name = item.short_name
         return obj
       })
-
       try {
-        const { error } = await supabase
-          .from('ativos')
-          .upsert(loteLimpo, { onConflict: 'ticker' })
-
+        const { error } = await supabase.from('ativos').upsert(loteLimpo, { onConflict: 'ticker' })
         if (error) {
           erros += lote.length
           errosDetalhe.push(`Lote ${i}: ${error.message}`)
-          console.error('Erro lote:', error)
         } else {
           sucesso += lote.length
         }
@@ -110,10 +92,8 @@ export default function ImportarDadosB3() {
         erros += lote.length
         errosDetalhe.push(`Lote ${i}: ${err.message}`)
       }
-
       setProgresso({ atual: Math.min(i + LOTE, dadosProcessados.length), total: dadosProcessados.length })
     }
-
     setImportando(false)
     setResultado({ sucesso, erros, errosDetalhe })
   }
@@ -153,15 +133,10 @@ export default function ImportarDadosB3() {
               <div>
                 <h2 className="text-lg font-semibold text-gray-700 mb-2">O que essa importação faz?</h2>
                 <p className="text-gray-600 text-sm mb-3">
-                  Importa o <strong>catálogo completo de ativos da B3</strong> (1500+ tickers) com
-                  razão social, CNPJ, segmento e Short Name oficial.
-                </p>
-                <p className="text-gray-600 text-sm mb-3">
-                  Os <strong>preços, DY e P/VP</strong> também serão importados, mas serão atualizados
-                  periodicamente pela Edge Function "Atualizar Cotações".
+                  Importa o catálogo completo de ativos da B3 (1500+ tickers) com razão social, CNPJ, segmento e Short Name oficial.
                 </p>
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mt-3 text-sm text-blue-800">
-                  <strong>💡 Dica:</strong> Você só precisa fazer essa importação <strong>uma vez</strong>.
+                  <strong>Dica:</strong> Você só precisa fazer essa importação uma vez.
                 </div>
               </div>
             </div>
@@ -213,7 +188,7 @@ export default function ImportarDadosB3() {
                 <StatCard label="BDRs" valor={stats.bdr} cor="text-orange-600" />
               </div>
 
-              <h3 className="text-sm font-medium text-gray-500 mb-2">Completude dos dados:</h3>
+              <h3 className="text-sm font-medium text-gray-500 mb-2">Completude:</h3>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-4">
                 <Completude label="Razão Social" qtde={stats.comRazaoSocial} total={stats.total} />
                 <Completude label="CNPJ" qtde={stats.comCNPJ} total={stats.total} />
@@ -224,7 +199,7 @@ export default function ImportarDadosB3() {
               </div>
 
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4 text-sm text-yellow-800">
-                <strong>⚠ Atenção:</strong> os dados existentes na tabela <code>ativos</code> serão sobrescritos.
+                <strong>Atenção:</strong> dados existentes serão sobrescritos.
               </div>
 
               <div className="flex gap-3 justify-end">
@@ -239,15 +214,13 @@ export default function ImportarDadosB3() {
                   disabled={importando}
                   className="px-6 py-2 text-sm bg-green-700 text-white rounded-lg hover:bg-green-600 disabled:opacity-50"
                 >
-                  {importando
-                    ? `Importando... ${progresso?.atual || 0}/${progresso?.total || 0}`
-                    : `Importar ${stats.total} ativos`}
+                  {importando ? `Importando... ${progresso?.atual || 0}/${progresso?.total || 0}` : `Importar ${stats.total} ativos`}
                 </button>
               </div>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border p-6">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Primeiros 20 ativos (preview):</h3>
+              <h3 className="text-sm font-medium text-gray-700 mb-3">Primeiros 20 ativos:</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead className="border-b text-gray-500">
@@ -300,18 +273,6 @@ export default function ImportarDadosB3() {
                 <p className="text-2xl font-bold text-red-700">{resultado.erros}</p>
               </div>
             </div>
-
-            {resultado.errosDetalhe.length > 0 && (
-              <details className="text-left bg-red-50 rounded-lg p-3 mb-4 max-w-md mx-auto">
-                <summary className="cursor-pointer text-sm text-red-700 font-medium">
-                  Ver detalhes dos erros
-                </summary>
-                <ul className="mt-2 text-xs text-red-600 space-y-1">
-                  {resultado.errosDetalhe.map((e, i) => <li key={i}>• {e}</li>)}
-                </ul>
-              </details>
-            )}
-
             <div className="flex gap-3 justify-center">
               <button onClick={() => navigate('/dashboard')} className="px-6 py-2 bg-green-700 text-white rounded-lg hover:bg-green-600">
                 Ir para o Dashboard
@@ -326,4 +287,27 @@ export default function ImportarDadosB3() {
 
 function StatCard({ label, valor, cor }) {
   return (
-    <div
+    <div className="border rounded-lg p-3">
+      <p className="text-xs text-gray-500">{label}</p>
+      <p className={`text-2xl font-bold ${cor}`}>{valor}</p>
+    </div>
+  )
+}
+
+function Completude({ label, qtde, total }) {
+  const pct = total > 0 ? (qtde / total) * 100 : 0
+  return (
+    <div className="text-sm">
+      <div className="flex justify-between mb-1">
+        <span className="text-gray-600">{label}</span>
+        <span className="font-medium text-gray-800">{qtde}/{total} ({pct.toFixed(0)}%)</span>
+      </div>
+      <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
+        <div
+          className={`h-full ${pct > 80 ? 'bg-green-500' : pct > 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  )
+}
