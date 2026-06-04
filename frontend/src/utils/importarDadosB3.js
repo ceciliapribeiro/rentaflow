@@ -28,16 +28,40 @@ function limparTicker(t) {
 
 function decodeHtml(str) {
   if (!str) return ''
-  return String(str)
+  let s = String(str)
+
+  // 1. Decodifica HTML entities
+  s = s
     .replace(/&#x([0-9A-Fa-f]+);/g, (_, h) => String.fromCharCode(parseInt(h, 16)))
     .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(parseInt(d, 10)))
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
+
+  // 2. Corrige encoding latin-1 → UTF-8 invertido (mojibake)
+  if (/[ÃÂ]/.test(s)) {
+    try {
+      const bytes = new Uint8Array(s.length)
+      for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i) & 0xff
+      const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+      if (!/[ÃÂ]/.test(decoded) || decoded.length < s.length * 0.7) {
+        s = decoded
+      } else {
+        s = s
+          .replace(/Ã£/g, 'ã').replace(/Ã¡/g, 'á').replace(/Ã©/g, 'é')
+          .replace(/Ã­/g, 'í').replace(/Ã³/g, 'ó').replace(/Ãº/g, 'ú')
+          .replace(/Ã§/g, 'ç').replace(/Ã¢/g, 'â').replace(/Ãª/g, 'ê')
+          .replace(/Ã®/g, 'î').replace(/Ã´/g, 'ô').replace(/Ã»/g, 'û')
+          .replace(/Ã€/g, 'À').replace(/Ã /g, 'à').replace(/Ã±/g, 'ñ')
+          .replace(/Ã'/g, 'Ñ').replace(/Ã‰/g, 'É').replace(/Â/g, '')
+      }
+    } catch {
+      s = s.replace(/Â/g, '')
+    }
+  }
+
+  return s.replace(/\s+/g, ' ').trim()
 }
+
 
 export const processarDadosB3 = (jsonData) => {
   const resultado = []
