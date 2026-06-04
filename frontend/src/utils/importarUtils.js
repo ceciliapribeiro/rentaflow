@@ -14,6 +14,25 @@ export const identificarTipo = (ticker) => {
   return 'Acao'
 }
 
+// Lista de palavras que indicam "não é da B3" — descartar na importação
+const NAO_E_B3 = ['TESOURO', 'CDB', 'LCI', 'LCA', 'LFT', 'LTN', 'NTN', 'POUPANCA', 'POUPANÇA']
+
+export const ehTickerValido = (ticker) => {
+  if (!ticker) return false
+  const t = String(ticker).toUpperCase().trim()
+  // Descarta se for renda fixa/tesouro
+  if (NAO_E_B3.some(palavra => t.includes(palavra))) return false
+  // Aceita 4-6 caracteres alfanuméricos
+  return /^[A-Z]{3,6}\d{0,2}F?$/.test(t)
+}
+
+export const ehDataValida = (dataIso) => {
+  if (!dataIso) return false
+  const ano = parseInt(dataIso.split('-')[0], 10)
+  // Descarta datas absurdas (antes de 2000 ou no futuro distante)
+  return ano >= 2000 && ano <= 2050
+}
+
 export const parseData = (valor) => {
   if (!valor) return null
 
@@ -114,12 +133,26 @@ export const formatData = (iso) => {
   const [a, m, d] = iso.split('-')
   return `${d}/${m}/${a}`
 }
+
 // ══════════════════════════════════════════════════════════════════
-// PROCESSAMENTO POR ABA
+// PROCESSAMENTO POR ABA — COM FILTROS DE VALIDAÇÃO
 // ══════════════════════════════════════════════════════════════════
 
 export const processarOperacoes = (jsonData) => {
   const resultado = []
+  const stats = {
+    total: jsonData.length,
+    aceitas: 0,
+    sem_ticker_e_data: 0,
+    nao_e_b3: 0,
+    sem_valor: 0,
+    sem_qtde: 0,
+    data_invalida: 0,
+  }
+
+  console.log('[OPERAÇÕES] Linhas recebidas:', jsonData.length)
+  if (jsonData.length > 0) console.log('[OPERAÇÕES] Colunas:', Object.keys(jsonData[0]))
+
   for (const row of jsonData) {
     const data = encontrarCampo(row, ['Data'])
     const ticker = encontrarCampo(row, ['Ticker', 'Ticket', 'Codigo', 'Ativo'])
@@ -127,7 +160,23 @@ export const processarOperacoes = (jsonData) => {
     const valor = encontrarCampo(row, ['Valor', 'Preco', 'Preço'])
     const operacao = encontrarCampo(row, ['Operacao', 'Operação', 'Tipo'])
 
-    if (!ticker || !data) continue
+    // Filtro 1: descarta linhas sem ticker E sem data (linhas vazias da planilha)
+    if (!ticker && !data) {
+      stats.sem_ticker_e_data++
+      continue
+    }
+
+    // Filtro 2: descarta se faltar ticker ou data
+    if (!ticker || !data) {
+      stats.sem_ticker_e_data++
+      continue
+    }
+
+    // Filtro 3: descarta Tesouro/CDB/LCI/LCA (não é da B3)
+    if (!ehTickerValido(ticker)) {
+      stats.nao_e_b3++
+      continue
+    }
 
     const tickerLimpo = limparTicker(ticker)
     const dataLimpa = parseData(data)
@@ -135,7 +184,25 @@ export const processarOperacoes = (jsonData) => {
     const valorNum = parseNumero(valor)
     const opStr = String(operacao || '').toUpperCase().trim()
 
-    if (!tickerLimpo || !dataLimpa || qtdeNum === 0) continue
+    // Filtro 4: ticker, data ou qtde inválidos
+    if (!tickerLimpo) {
+      stats.nao_e_b3++
+      continue
+    }
+    if (!dataLimpa || !ehDataValida(dataLimpa)) {
+      stats.data_invalida++
+      continue
+    }
+    if (qtdeNum === 0) {
+      stats.sem_qtde++
+      continue
+    }
+
+    // Filtro 5: descarta operações sem valor (preço unitário)
+    if (valorNum === 0) {
+      stats.sem_valor++
+      continue
+    }
 
     let tipoOp = 'COMPRA'
     if (opStr.includes('VENDA') || opStr === 'V' || qtdeNum < 0) tipoOp = 'VENDA'
@@ -150,12 +217,23 @@ export const processarOperacoes = (jsonData) => {
       tipo_ativo: identificarTipo(tickerLimpo),
       selecionado: true,
     })
+    stats.aceitas++
   }
+
+  console.log('[OPERAÇÕES] Estatísticas:', stats)
   return resultado
 }
 
 export const processarAportes = (jsonData) => {
   const resultado = []
+  const stats = {
+    total: jsonData.length,
+    aceitos: 0,
+    sem_data: 0,
+    sem_valor: 0,
+    data_invalida: 0,
+  }
+
   console.log('[APORTES] jsonData recebido:', jsonData.length, 'linhas')
   if (jsonData.length > 0) console.log('[APORTES] Colunas:', Object.keys(jsonData[0]))
 
@@ -164,11 +242,26 @@ export const processarAportes = (jsonData) => {
     const valor = encontrarCampo(row, ['Valor'])
     const descricao = encontrarCampo(row, ['Descricao', 'Descrição', 'Obs'])
 
-    if (!data || valor === null || valor === undefined || valor === '') continue
+    if (!data) {
+      stats.sem_data++
+      continue
+    }
+    if (valor === null || valor === undefined || valor === '') {
+      stats.sem_valor++
+      continue
+    }
 
     const dataLimpa = parseData(data)
     const valorNum = parseNumero(valor)
-    if (!dataLimpa || valorNum === 0) continue
+
+    if (!dataLimpa || !ehDataValida(dataLimpa)) {
+      stats.data_invalida++
+      continue
+    }
+    if (valorNum === 0) {
+      stats.sem_valor++
+      continue
+    }
 
     resultado.push({
       data: dataLimpa,
@@ -176,13 +269,25 @@ export const processarAportes = (jsonData) => {
       descricao: descricao ? String(descricao) : null,
       selecionado: true,
     })
+    stats.aceitos++
   }
-  console.log('[APORTES] Processados:', resultado.length)
+
+  console.log('[APORTES] Estatísticas:', stats)
   return resultado
 }
 
 export const processarDividendos = (jsonData) => {
   const resultado = []
+  const stats = {
+    total: jsonData.length,
+    aceitos: 0,
+    sem_ticker: 0,
+    sem_data: 0,
+    sem_valor: 0,
+    nao_e_b3: 0,
+    data_invalida: 0,
+  }
+
   console.log('[DIVIDENDOS] jsonData recebido:', jsonData.length, 'linhas')
   if (jsonData.length > 0) console.log('[DIVIDENDOS] Colunas:', Object.keys(jsonData[0]))
 
@@ -192,12 +297,36 @@ export const processarDividendos = (jsonData) => {
     const tipo = encontrarCampo(row, ['PROVENTOS', 'Proventos', 'Tipo Provento', 'Tipo'])
     const ticker = encontrarCampo(row, ['ATIVO', 'Ativo', 'TICKET', 'Ticker', 'Codigo'])
 
-    if (!ticker || !data) continue
+    if (!ticker) {
+      stats.sem_ticker++
+      continue
+    }
+    if (!data) {
+      stats.sem_data++
+      continue
+    }
+
+    if (!ehTickerValido(ticker)) {
+      stats.nao_e_b3++
+      continue
+    }
 
     const tickerLimpo = limparTicker(ticker)
     const dataLimpa = parseData(data)
     const valorNum = parseNumero(valor)
-    if (!tickerLimpo || !dataLimpa || valorNum === 0) continue
+
+    if (!tickerLimpo) {
+      stats.nao_e_b3++
+      continue
+    }
+    if (!dataLimpa || !ehDataValida(dataLimpa)) {
+      stats.data_invalida++
+      continue
+    }
+    if (valorNum === 0) {
+      stats.sem_valor++
+      continue
+    }
 
     let tipoNorm = 'RENDIMENTO'
     const tipoStr = String(tipo || '').toUpperCase()
@@ -214,7 +343,9 @@ export const processarDividendos = (jsonData) => {
       tipo: tipoNorm,
       selecionado: true,
     })
+    stats.aceitos++
   }
-  console.log('[DIVIDENDOS] Processados:', resultado.length)
+
+  console.log('[DIVIDENDOS] Estatísticas:', stats)
   return resultado
 }
