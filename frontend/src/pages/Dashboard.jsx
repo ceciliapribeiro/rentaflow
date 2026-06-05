@@ -255,31 +255,32 @@ export default function Dashboard() {
           <div className="bg-white rounded-xl shadow-sm border p-6 mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-gray-700">Minha Carteira</h2>
-              <div className="flex gap-2">
-                <button
-                  onClick={atualizarCotacoes}
-                  disabled={atualizandoCotacoes}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50"
-                >
-                  <Zap size={16} className={atualizandoCotacoes ? 'animate-pulse' : ''} />
-                  {atualizandoCotacoes ? 'Atualizando...' : 'Atualizar Cotações'}
-                </button>
-                <button
-                  onClick={() => navigate('/importar-dados-b3')}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-500"
-                >
-				<button
-  onClick={() => navigate('/smart-aporte')}
-  className="flex items-center gap-2 px-4 py-2 text-sm bg-amber-700 text-white rounded-lg hover:bg-amber-600"
->
-  <Calculator size={16} /> Smart Aporte
-</button>
-                  <Database size={16} /> Catálogo B3
-                </button>
-                <button onClick={handleImportar} className="flex items-center gap-2 px-4 py-2 text-sm bg-green-700 text-white rounded-lg hover:bg-green-600">
-                  <Upload size={16} /> Importar
-                </button>
-              </div>
+	<div className="flex gap-2">
+  <button
+    onClick={atualizarCotacoes}
+    disabled={atualizandoCotacoes}
+    className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50"
+  >
+    <Zap size={16} className={atualizandoCotacoes ? 'animate-pulse' : ''} />
+    {atualizandoCotacoes ? 'Atualizando...' : 'Atualizar Cotações'}
+  </button>
+  <button
+    onClick={() => navigate('/smart-aporte')}
+    className="flex items-center gap-2 px-4 py-2 text-sm bg-amber-700 text-white rounded-lg hover:bg-amber-600"
+  >
+    <Calculator size={16} /> Smart Aporte
+  </button>
+  <button
+    onClick={() => navigate('/importar-dados-b3')}
+    className="flex items-center gap-2 px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-500"
+  >
+    <Database size={16} /> Catálogo B3
+  </button>
+  <button onClick={handleImportar} className="flex items-center gap-2 px-4 py-2 text-sm bg-green-700 text-white rounded-lg hover:bg-green-600">
+    <Upload size={16} /> Importar
+  </button>
+</div>		  
+
             </div>
 
             {statusCotacao && (
