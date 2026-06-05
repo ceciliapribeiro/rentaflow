@@ -268,6 +268,12 @@ export default function Dashboard() {
                   onClick={() => navigate('/importar-dados-b3')}
                   className="flex items-center gap-2 px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-500"
                 >
+				<button
+  onClick={() => navigate('/smart-aporte')}
+  className="flex items-center gap-2 px-4 py-2 text-sm bg-amber-700 text-white rounded-lg hover:bg-amber-600"
+>
+  <Calculator size={16} /> Smart Aporte
+</button>
                   <Database size={16} /> Catálogo B3
                 </button>
                 <button onClick={handleImportar} className="flex items-center gap-2 px-4 py-2 text-sm bg-green-700 text-white rounded-lg hover:bg-green-600">
