@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import {
   TrendingUp, Wallet, DollarSign, PieChart,
   LogOut, RefreshCw, ArrowUpRight, ArrowDownRight,
-  Upload, Zap, Database
+  Upload, Zap, Database, Calculator
 } from 'lucide-react'
 
 export default function Dashboard() {
