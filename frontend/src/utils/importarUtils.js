@@ -21,7 +21,8 @@ export const ehTickerValido = (ticker) => {
   if (!ticker) return false
   const t = String(ticker).toUpperCase().trim()
   // Descarta se for renda fixa/tesouro
-  if (NAO_E_B3.some(palavra => t.includes(palavra))) return false
+  if (D:\Cecília\Documents\Projeto Renta Flow\rentaflow\frontend\src\pages\SmartAporte.jsx
+.some(palavra => t.includes(palavra))) return false
   // Aceita 4-6 caracteres alfanuméricos
   return /^[A-Z]{3,6}\d{0,2}F?$/.test(t)
 }

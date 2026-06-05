@@ -345,6 +345,14 @@ export default function Dashboard() {
             <h2 className="text-xl font-semibold text-gray-700 mb-2">Bem-vindo ao RentaFlow v2.0!</h2>
             <p className="text-gray-500 max-w-lg mx-auto mb-6">Comece importando sua carteira.</p>
             <div className="flex gap-3 justify-center">
+			<button
+  onClick={() => navigate('/smart-aporte')}
+  className="px-4 py-2 bg-amber-700 text-white text-sm rounded-lg hover:bg-amber-600 flex items-center gap-2"
+>
+  <Calculator size={16} />
+  Smart Aporte
+</button>
+
               <button onClick={() => navigate('/importar-dados-b3')}
                 className="inline-flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-500 font-medium">
                 <Database size={18} /> Catálogo B3
