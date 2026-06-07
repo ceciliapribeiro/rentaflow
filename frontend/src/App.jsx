@@ -1,3 +1,4 @@
+import AtivoDetalhe from './pages/AtivoDetalhe'
 import Operacoes from './pages/Operacoes'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
@@ -28,6 +29,7 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+		<Route path="/ativo/:ticker" element={<ProtectedRoute><AtivoDetalhe /></ProtectedRoute>} />
 		<Route path="/operacoes" element={<ProtectedRoute><Operacoes /></ProtectedRoute>} />
 		<Route path="/corretoras" element={<ProtectedRoute><Corretoras /></ProtectedRoute>} />		
 		<Route path="/dividendos" element={<ProtectedRoute><Dividendos /></ProtectedRoute>} />

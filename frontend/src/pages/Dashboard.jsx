@@ -394,7 +394,14 @@ export default function Dashboard() {
                       ? ((a.preco_atual - a.preco_medio) / a.preco_medio * 100) : 0
                     return (
                       <tr key={i} className="border-b hover:bg-gray-50">
-                        <td className="py-2 px-3 font-medium text-gray-800">{a.ticker}</td>
+					<td className="py-2 px-3 font-medium">
+						<button
+						onClick={() => navigate(`/ativo/${a.ticker}`)}
+					className="text-gray-800 hover:text-blue-600 hover:underline"
+					>
+					{a.ticker}
+				</button>
+					</td>
                         <td className="py-2 px-3">
                           <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                             a.tipo === 'FII' ? 'bg-purple-100 text-purple-700' :
