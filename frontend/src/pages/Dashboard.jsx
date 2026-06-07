@@ -20,44 +20,44 @@ export default function Dashboard() {
   const [atualizandoCotacoes, setAtualizandoCotacoes] = useState(false)
   const [statusCotacao, setStatusCotacao] = useState(null)
 
-  useEffect(() => { if (user) carregarResumo() }, [user])
+  const [corretoras, setCorretoras] = useState([])
+  const [filtroCorretora, setFiltroCorretora] = useState('todas')
+
+  useEffect(() => {
+    if (user) carregarCorretoras()
+  }, [user])
+
+  useEffect(() => {
+    if (user) carregarResumo()
+  }, [user, filtroCorretora])
+
+  const carregarCorretoras = async () => {
+    const { data } = await supabase
+      .from('corretoras')
+      .select('id, nome, cor')
+      .eq('user_id', user.id)
+      .order('nome')
+    setCorretoras(data || [])
+  }
 
   const carregarResumo = async () => {
     setLoading(true)
     let debug = []
     try {
-      debug.push(`User ID: ${user?.id || 'NÃO AUTENTICADO'}`)
+      debug.push(`User: ${user?.id?.substring(0, 8) || '-'}`)
+      debug.push(`Filtro: ${filtroCorretora === 'todas' ? 'Todas' : `Corr ${filtroCorretora}`}`)
 
-      const { data: carteira } = await supabase
-        .from('carteira').select('*').eq('user_id', user.id)
-      debug.push(`Carteira: ${carteira?.length || 0} linhas`)
-
-      let precosAtivos = {}
-      if (carteira && carteira.length > 0) {
-        const tickers = carteira.map(c => c.ticker)
-        const { data: ativosBD } = await supabase
-          .from('ativos').select('ticker, preco, tipo, dy, pvp, razao_social')
-          .in('ticker', tickers)
-        if (ativosBD) {
-          ativosBD.forEach(a => {
-            precosAtivos[a.ticker] = {
-              preco: Number(a.preco) || 0,
-              tipo: a.tipo,
-              dy: Number(a.dy) || 0,
-              pvp: Number(a.pvp) || 0,
-              razao_social: a.razao_social,
-            }
-          })
-        }
+      let queryOps = supabase.from('operacoes').select('*').eq('user_id', user.id)
+      if (filtroCorretora !== 'todas') {
+        queryOps = queryOps.eq('corretora_id', filtroCorretora)
       }
-
-      const { data: operacoes } = await supabase
-        .from('operacoes').select('*').eq('user_id', user.id)
-      debug.push(`Operações: ${operacoes?.length || 0} linhas`)
+      const { data: operacoes } = await queryOps
+      debug.push(`Ops: ${operacoes?.length || 0}`)
 
       const custoMedio = {}
       if (operacoes && operacoes.length > 0) {
-        for (const op of operacoes) {
+        const opsOrdenadas = [...operacoes].sort((a, b) => a.data.localeCompare(b.data))
+        for (const op of opsOrdenadas) {
           const t = op.ticker
           const q = Number(op.quantidade) || 0
           const p = Number(op.preco_unitario) || 0
@@ -76,55 +76,76 @@ export default function Dashboard() {
         }
       }
 
-      const { data: aportesRows } = await supabase
-        .from('aportes').select('valor').eq('user_id', user.id)
+      const tickersComSaldo = Object.keys(custoMedio).filter(t => custoMedio[t].qtde > 0.01)
+
+      let precosAtivos = {}
+      if (tickersComSaldo.length > 0) {
+        const { data: ativosBD } = await supabase
+          .from('ativos').select('ticker, preco, tipo, dy, pvp, razao_social')
+          .in('ticker', tickersComSaldo)
+        if (ativosBD) {
+          ativosBD.forEach(a => {
+            precosAtivos[a.ticker] = {
+              preco: Number(a.preco) || 0,
+              tipo: a.tipo,
+              dy: Number(a.dy) || 0,
+              pvp: Number(a.pvp) || 0,
+              razao_social: a.razao_social,
+            }
+          })
+        }
+      }
+
+      let queryApt = supabase.from('aportes').select('valor').eq('user_id', user.id)
+      if (filtroCorretora !== 'todas') {
+        queryApt = queryApt.eq('corretora_id', filtroCorretora)
+      }
+      const { data: aportesRows } = await queryApt
       const totalAportado = aportesRows
         ? aportesRows.reduce((s, a) => s + Number(a.valor || 0), 0) : 0
-      debug.push(`Aportes: ${aportesRows?.length || 0} linhas`)
+      debug.push(`Apt: ${aportesRows?.length || 0}`)
 
-      const { data: divsRows } = await supabase
-        .from('dividendos').select('valor').eq('user_id', user.id)
+      let queryDiv = supabase.from('dividendos').select('valor').eq('user_id', user.id)
+      if (filtroCorretora !== 'todas') {
+        queryDiv = queryDiv.eq('corretora_id', filtroCorretora)
+      }
+      const { data: divsRows } = await queryDiv
       const totalDividendos = divsRows
         ? divsRows.reduce((s, d) => s + Number(d.valor || 0), 0) : 0
-      debug.push(`Dividendos: ${divsRows?.length || 0} linhas`)
+      debug.push(`Div: ${divsRows?.length || 0}`)
 
       const listaAtivos = []
       let patrimonio = 0
 
-      if (carteira && carteira.length > 0) {
-        for (const c of carteira) {
-          const qtde = Number(c.qtde_ideal) || 0
-          if (qtde <= 0) continue
-          const info = precosAtivos[c.ticker] || { preco: 0, tipo: null, dy: 0, pvp: 0, razao_social: null }
-          const valorAtual = qtde * info.preco
-          const cm = custoMedio[c.ticker] || { qtde: 0, custo: 0 }
-          const pm = cm.qtde > 0 ? cm.custo / cm.qtde : 0
-          const custoInvestido = qtde * pm
-          let tipo = info.tipo
-          if (!tipo) {
-            tipo = c.ticker.endsWith('11') && c.ticker.length >= 5 ? 'FII' : 'Acao'
-          }
-          listaAtivos.push({
-            ticker: c.ticker,
-            quantidade: qtde,
-            preco_medio: pm,
-            preco_atual: info.preco,
-            valor_atual: valorAtual,
-            valor_investido: custoInvestido,
-            tipo,
-            dy: info.dy,
-            pvp: info.pvp,
-            razao_social: info.razao_social,
-            tem_preco: info.preco > 0,
-          })
-          patrimonio += valorAtual > 0 ? valorAtual : custoInvestido
+      for (const ticker of tickersComSaldo) {
+        const cm = custoMedio[ticker]
+        const qtde = cm.qtde
+        const pm = cm.qtde > 0 ? cm.custo / cm.qtde : 0
+        const info = precosAtivos[ticker] || { preco: 0, tipo: null, dy: 0, pvp: 0, razao_social: null }
+        const valorAtual = qtde * info.preco
+        const custoInvestido = qtde * pm
+        let tipo = info.tipo
+        if (!tipo) {
+          tipo = ticker.endsWith('11') && ticker.length >= 5 ? 'FII' : 'Acao'
         }
+        listaAtivos.push({
+          ticker,
+          quantidade: qtde,
+          preco_medio: pm,
+          preco_atual: info.preco,
+          valor_atual: valorAtual,
+          valor_investido: custoInvestido,
+          tipo,
+          dy: info.dy,
+          pvp: info.pvp,
+          razao_social: info.razao_social,
+          tem_preco: info.preco > 0,
+        })
+        patrimonio += valorAtual > 0 ? valorAtual : custoInvestido
       }
 
-      debug.push(`Ativos ativos: ${listaAtivos.length}`)
-      debug.push(`Aportado: R$ ${totalAportado.toFixed(2)}`)
-      debug.push(`Patrimônio: R$ ${patrimonio.toFixed(2)}`)
-      debug.push(`Sem preço: ${listaAtivos.filter(a => !a.tem_preco).length}`)
+      debug.push(`Ativos: ${listaAtivos.length}`)
+      debug.push(`Patr: R$ ${patrimonio.toFixed(0)}`)
 
       setResumo({
         patrimonio,
@@ -182,6 +203,9 @@ export default function Dashboard() {
   const formatBRL = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
   const rentabilidade = resumo.totalAportes > 0
     ? ((resumo.patrimonio - resumo.totalAportes) / resumo.totalAportes * 100) : 0
+
+  const corretoraSelecionada = corretoras.find(c => String(c.id) === String(filtroCorretora))
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-green-800 text-white">
@@ -203,6 +227,37 @@ export default function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {corretoras.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap items-center gap-3">
+            <Building2 size={20} className="text-slate-700 flex-shrink-0" />
+            <span className="text-sm font-medium text-gray-700">Visualizar:</span>
+            <select
+              value={filtroCorretora}
+              onChange={(e) => setFiltroCorretora(e.target.value)}
+              className="px-3 py-1.5 border rounded-lg text-sm bg-white"
+            >
+              <option value="todas">Todas as corretoras</option>
+              {corretoras.map(c => (
+                <option key={c.id} value={c.id}>{c.nome}</option>
+              ))}
+            </select>
+            {filtroCorretora !== 'todas' && corretoraSelecionada && (
+              <div className="flex items-center gap-2 px-3 py-1 rounded-lg" style={{ backgroundColor: `${corretoraSelecionada.cor}20` }}>
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: corretoraSelecionada.cor || '#6b7280' }} />
+                <span className="text-xs font-medium" style={{ color: corretoraSelecionada.cor }}>
+                  {corretoraSelecionada.nome}
+                </span>
+              </div>
+            )}
+            <button
+              onClick={() => navigate('/corretoras')}
+              className="ml-auto text-xs text-gray-500 hover:text-gray-700 underline"
+            >
+              Gerenciar corretoras
+            </button>
+          </div>
+        )}
+
         {debugInfo && (
           <div className="bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 mb-6">
             <h3 className="font-bold text-yellow-800 mb-2">Debug:</h3>
@@ -253,39 +308,52 @@ export default function Dashboard() {
 
         {ativos.length > 0 ? (
           <div className="bg-white rounded-xl shadow-sm border p-6 mb-8">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-700">Minha Carteira</h2>
-
-
-<div className="flex gap-2 flex-wrap">
-  <button onClick={atualizarCotacoes} disabled={atualizandoCotacoes}
-    className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50">
-    <Zap size={16} className={atualizandoCotacoes ? 'animate-pulse' : ''} />
-    {atualizandoCotacoes ? 'Atualizando...' : 'Atualizar Cotações'}
-  </button>
-  <button onClick={() => navigate('/dividendos')}
-    className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-500">
-    <DollarSign size={16} /> Dividendos
-  </button>
-  <button onClick={() => navigate('/smart-aporte')}
-    className="flex items-center gap-2 px-4 py-2 text-sm bg-amber-700 text-white rounded-lg hover:bg-amber-600">
-    <Calculator size={16} /> Smart Aporte
-  </button>
-  <button onClick={() => navigate('/corretoras')}
-    className="flex items-center gap-2 px-4 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-600">
-    <Building2 size={16} /> Corretoras
-  </button>
-  <button onClick={() => navigate('/importar-dados-b3')}
-    className="flex items-center gap-2 px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-500">
-    <Database size={16} /> Catálogo B3
-  </button>
-  <button onClick={handleImportar}
-    className="flex items-center gap-2 px-4 py-2 text-sm bg-green-700 text-white rounded-lg hover:bg-green-600">
-    <Upload size={16} /> Importar
-  </button>
-</div>
-
-
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h2 className="text-lg font-semibold text-gray-700">
+                Minha Carteira
+                {filtroCorretora !== 'todas' && corretoraSelecionada && (
+                  <span className="ml-2 text-sm font-normal text-gray-500">
+                    — {corretoraSelecionada.nome}
+                  </span>
+                )}
+              </h2>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={atualizarCotacoes}
+                  disabled={atualizandoCotacoes}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50"
+                >
+                  <Zap size={16} className={atualizandoCotacoes ? 'animate-pulse' : ''} />
+                  {atualizandoCotacoes ? 'Atualizando...' : 'Atualizar Cotações'}
+                </button>
+                <button
+                  onClick={() => navigate('/dividendos')}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-500"
+                >
+                  <DollarSign size={16} /> Dividendos
+                </button>
+                <button
+                  onClick={() => navigate('/smart-aporte')}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-amber-700 text-white rounded-lg hover:bg-amber-600"
+                >
+                  <Calculator size={16} /> Smart Aporte
+                </button>
+                <button
+                  onClick={() => navigate('/corretoras')}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+                >
+                  <Building2 size={16} /> Corretoras
+                </button>
+                <button
+                  onClick={() => navigate('/importar-dados-b3')}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-500"
+                >
+                  <Database size={16} /> Catálogo B3
+                </button>
+                <button onClick={handleImportar} className="flex items-center gap-2 px-4 py-2 text-sm bg-green-700 text-white rounded-lg hover:bg-green-600">
+                  <Upload size={16} /> Importar
+                </button>
+              </div>
             </div>
 
             {statusCotacao && (
@@ -341,8 +409,8 @@ export default function Dashboard() {
                         <td className="py-2 px-3 text-right text-gray-600">
                           {a.pvp > 0 ? a.pvp.toFixed(2) : '-'}
                         </td>
-                        <td className={`py-2 px-3 text-right ${rent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {a.tem_preco ? `${rent.toFixed(1)}%` : '-'}
+                        <td className={`py-2 px-3 text-right font-medium ${rent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {a.tem_preco ? `${rent.toFixed(2)}%` : '-'}
                         </td>
                       </tr>
                     )
@@ -352,34 +420,51 @@ export default function Dashboard() {
             </div>
           </div>
         ) : (
-          <div className="bg-white rounded-xl shadow-sm border p-8 text-center">
-            <Upload className="mx-auto text-green-600 mb-4" size={48} />
-            <h2 className="text-xl font-semibold text-gray-700 mb-2">Bem-vindo ao RentaFlow v2.0!</h2>
-            <p className="text-gray-500 max-w-lg mx-auto mb-6">Comece importando sua carteira.</p>
-            <div className="flex gap-3 justify-center">
-			<button
-  onClick={() => navigate('/smart-aporte')}
-  className="px-4 py-2 bg-amber-700 text-white text-sm rounded-lg hover:bg-amber-600 flex items-center gap-2"
->
-  <Calculator size={16} />
-  Smart Aporte
-</button>
-
-              <button onClick={() => navigate('/importar-dados-b3')}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-500 font-medium">
-                <Database size={18} /> Catálogo B3
+          <div className="bg-white rounded-xl shadow-sm border p-12 text-center">
+            <PieChart className="mx-auto text-gray-300 mb-3" size={48} />
+            <h3 className="text-gray-700 font-semibold mb-2">
+              {filtroCorretora === 'todas' ? 'Sua carteira está vazia' : 'Nenhum ativo nesta corretora'}
+            </h3>
+            <p className="text-gray-500 text-sm mb-4">
+              {filtroCorretora === 'todas'
+                ? 'Importe suas operações para começar.'
+                : `Não há operações registradas para ${corretoraSelecionada?.nome || 'esta corretora'}.`}
+            </p>
+            <div className="flex gap-3 justify-center flex-wrap">
+              {filtroCorretora !== 'todas' && (
+                <button
+                  onClick={() => setFiltroCorretora('todas')}
+                  className="px-4 py-2 border text-gray-700 rounded-lg hover:bg-gray-50 text-sm"
+                >
+                  Ver todas as corretoras
+                </button>
+              )}
+              <button
+                onClick={() => navigate('/smart-aporte')}
+                className="px-4 py-2 bg-amber-700 text-white text-sm rounded-lg hover:bg-amber-600 flex items-center gap-2"
+              >
+                <Calculator size={16} /> Smart Aporte
               </button>
-              <button onClick={handleImportar}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-green-700 text-white rounded-lg hover:bg-green-600 font-medium">
-                <Upload size={18} /> Importar Carteira
+              <button
+                onClick={() => navigate('/importar-dados-b3')}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-500 text-sm"
+              >
+                <Database size={16} /> Catálogo B3
+              </button>
+              <button
+                onClick={handleImportar}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-600 text-sm"
+              >
+                <Upload size={16} /> Importar Carteira
               </button>
             </div>
           </div>
         )}
 
-        <p className="text-center text-gray-400 text-xs mt-8">RentaFlow v2.0 - Desenvolvido por Cecília Ribeiro</p>
+        <p className="text-center text-gray-400 text-xs mt-8">
+          RentaFlow v2.0 — Desenvolvido por Cecília Ribeiro
+        </p>
       </main>
     </div>
   )
 }
-
