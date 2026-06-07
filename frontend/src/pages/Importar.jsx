@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import * as XLSX from 'xlsx'
-import { Upload, Download, FileSpreadsheet, CheckCircle, AlertCircle, ArrowLeft } from 'lucide-react'
+import { Upload, Download, FileSpreadsheet, CheckCircle, AlertCircle, ArrowLeft, Building2 } from 'lucide-react'
 import {
   processarOperacoes, processarAportes, processarDividendos,
 } from '../utils/importarUtils'
@@ -21,6 +21,28 @@ export default function Importar() {
   const [erro, setErro] = useState(null)
   const [tipoImportacao, setTipoImportacao] = useState('modelo')
   const [abaAtiva, setAbaAtiva] = useState('operacoes')
+
+  // Corretoras
+  const [corretoras, setCorretoras] = useState([])
+  const [corretoraId, setCorretoraId] = useState('')
+
+  useEffect(() => {
+    if (user) carregarCorretoras()
+  }, [user])
+
+  const carregarCorretoras = async () => {
+    const { data } = await supabase
+      .from('corretoras')
+      .select('id, nome, cor')
+      .eq('user_id', user.id)
+      .order('nome')
+    setCorretoras(data || [])
+    // Seleciona a primeira por padrão (Inter, normalmente)
+    if (data && data.length > 0) {
+      const inter = data.find(c => c.nome === 'Inter')
+      setCorretoraId(String(inter?.id || data[0].id))
+    }
+  }
 
   const baixarModelo = () => {
     const link = document.createElement('a')
@@ -97,9 +119,12 @@ export default function Importar() {
 
     if (total === 0) { setErro('Selecione pelo menos um registro.'); return }
     if (!user?.id) { setErro('Usuário não autenticado.'); return }
+    if (!corretoraId) { setErro('Selecione uma corretora.'); return }
 
     setImportando(true)
     setErro(null)
+
+    const corrId = parseInt(corretoraId, 10)
 
     let sucOps = 0, errOps = 0, sucAp = 0, errAp = 0, sucDiv = 0, errDiv = 0
 
@@ -125,16 +150,14 @@ export default function Importar() {
           preco_unitario: item.preco_unitario,
           tipo_ativo: item.tipo_ativo,
           operacao: item.operacao,
+          corretora_id: corrId,
           origem: tipoImportacao === 'b3' ? 'importacao_b3' : 'importacao_modelo',
         }
 
-        const { data: dataOp, error: errOp } = await supabase
-          .from('operacoes')
-          .insert(dadosOp)
-          .select()
+        const { error: errOp } = await supabase.from('operacoes').insert(dadosOp).select()
 
         if (errOp) {
-          console.error(`[OP] ❌ ${item.ticker}:`, errOp.message, errOp.code, errOp.details)
+          console.error(`[OP] ${item.ticker}:`, errOp.message)
           errOps++
         } else {
           sucOps++
@@ -148,7 +171,11 @@ export default function Importar() {
     for (const item of apSel) {
       try {
         const { error } = await supabase.from('aportes').insert({
-          user_id: user.id, data: item.data, valor: item.valor, descricao: item.descricao,
+          user_id: user.id,
+          data: item.data,
+          valor: item.valor,
+          descricao: item.descricao,
+          corretora_id: corrId,
         })
         if (error) errAp++
         else sucAp++
@@ -164,6 +191,7 @@ export default function Importar() {
           valor: item.valor,
           tipo_provento: item.tipo,
           ano: parseInt(item.data_pagamento.split('-')[0], 10),
+          corretora_id: corrId,
         })
         if (error) errDiv++
         else sucDiv++
@@ -180,6 +208,8 @@ export default function Importar() {
 
   const listaAtiva = dados[abaAtiva] || []
   const selecionadosAba = listaAtiva.filter(d => d.selecionado).length
+  const corretoraEscolhida = corretoras.find(c => String(c.id) === String(corretoraId))
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-green-800 text-white">
@@ -197,6 +227,50 @@ export default function Importar() {
       <main className="max-w-6xl mx-auto px-4 py-8">
         {!preview && !resultado && (
           <>
+            <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
+              <h2 className="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2">
+                <Building2 size={20} className="text-slate-700" />
+                Vincular a uma corretora
+              </h2>
+              <p className="text-sm text-gray-500 mb-3">
+                Os dados importados serão associados a esta corretora. Você poderá filtrar
+                por corretora no Dashboard depois.
+              </p>
+              {corretoras.length === 0 ? (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-sm text-yellow-800">
+                  Nenhuma corretora cadastrada.{' '}
+                  <button onClick={() => navigate('/corretoras')} className="underline font-medium">
+                    Cadastre uma agora
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <select
+                    value={corretoraId}
+                    onChange={(e) => setCorretoraId(e.target.value)}
+                    className="flex-1 px-3 py-2 border rounded-lg bg-white"
+                  >
+                    {corretoras.map(c => (
+                      <option key={c.id} value={c.id}>{c.nome}</option>
+                    ))}
+                  </select>
+                  {corretoraEscolhida && (
+                    <div
+                      className="w-10 h-10 rounded-lg flex-shrink-0"
+                      style={{ backgroundColor: corretoraEscolhida.cor || '#6b7280' }}
+                      title={corretoraEscolhida.nome}
+                    />
+                  )}
+                  <button
+                    onClick={() => navigate('/corretoras')}
+                    className="px-3 py-2 border rounded-lg text-sm hover:bg-gray-50"
+                  >
+                    Gerenciar
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
               <h2 className="text-lg font-semibold text-gray-700 mb-4">Escolha como importar</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -253,6 +327,18 @@ export default function Importar() {
 
         {preview && !resultado && (
           <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
+            {corretoraEscolhida && (
+              <div className="mb-4 px-3 py-2 bg-slate-50 rounded-lg flex items-center gap-3 text-sm">
+                <Building2 size={16} className="text-slate-600" />
+                <span className="text-slate-700">Importando para:</span>
+                <span className="font-bold text-slate-900">{corretoraEscolhida.nome}</span>
+                <div
+                  className="w-4 h-4 rounded ml-auto"
+                  style={{ backgroundColor: corretoraEscolhida.cor || '#6b7280' }}
+                />
+              </div>
+            )}
+
             <div className="flex gap-2 border-b mb-4">
               {['operacoes', 'aportes', 'dividendos'].map(k => (
                 <button key={k} onClick={() => setAbaAtiva(k)}
@@ -287,6 +373,11 @@ export default function Importar() {
           <div className="bg-white rounded-xl shadow-sm border p-8 text-center">
             <CheckCircle className="mx-auto text-green-600 mb-4" size={48} />
             <h2 className="text-xl font-bold text-gray-800 mb-2">Importação concluída!</h2>
+            {corretoraEscolhida && (
+              <p className="text-sm text-gray-500 mb-4">
+                Vinculados à corretora <strong>{corretoraEscolhida.nome}</strong>
+              </p>
+            )}
             <div className="grid grid-cols-3 gap-4 max-w-lg mx-auto mb-6">
               <div className="border rounded-lg p-3">
                 <p className="text-xs text-gray-500">Operações</p>
