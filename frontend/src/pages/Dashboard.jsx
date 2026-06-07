@@ -270,6 +270,15 @@ export default function Dashboard() {
   >
     <Calculator size={16} /> Smart Aporte
   </button>
+  
+  <button
+  onClick={() => navigate('/dividendos')}
+  className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-500"
+>
+  <DollarSign size={16} /> Buscar Dividendos
+</button>
+
+  
   <button
     onClick={() => navigate('/importar-dados-b3')}
     className="flex items-center gap-2 px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-500"

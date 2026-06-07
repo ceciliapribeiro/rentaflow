@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard'
 import Importar from './pages/Importar'
 import ImportarDadosB3 from './pages/ImportarDadosB3'
 import SmartAporte from './pages/SmartAporte'
+import Dividendos from './pages/Dividendos'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -25,6 +26,8 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+		<Route path="/dividendos" element={<ProtectedRoute><Dividendos /></ProtectedRoute>} />
+
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/importar" element={<ProtectedRoute><Importar /></ProtectedRoute>} />
