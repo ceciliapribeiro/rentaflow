@@ -255,7 +255,8 @@ export default function Dashboard() {
           <div className="bg-white rounded-xl shadow-sm border p-6 mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold text-gray-700">Minha Carteira</h2>
-// botões da página
+
+
 <div className="flex gap-2 flex-wrap">
   <button onClick={atualizarCotacoes} disabled={atualizandoCotacoes}
     className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50">

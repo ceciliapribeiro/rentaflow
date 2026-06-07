@@ -44,10 +44,7 @@ export default function Corretoras() {
       if (error) throw error
       setCorretoras(corrs || [])
 
-      // Conta operações por corretora
-      const { data: contagens } = await supabase.rpc('exec_sql', {
-        query: ''
-      }).single().catch(() => ({ data: null }))
+
 
       // Fallback: conta manualmente
       const resumo = {}
