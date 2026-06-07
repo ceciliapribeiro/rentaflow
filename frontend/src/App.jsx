@@ -6,6 +6,7 @@ import Importar from './pages/Importar'
 import ImportarDadosB3 from './pages/ImportarDadosB3'
 import SmartAporte from './pages/SmartAporte'
 import Dividendos from './pages/Dividendos'
+import Corretoras from './pages/Corretoras'
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth()
@@ -26,15 +27,15 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+		<Route path="/corretoras" element={<ProtectedRoute><Corretoras /></ProtectedRoute>} />		
 		<Route path="/dividendos" element={<ProtectedRoute><Dividendos /></ProtectedRoute>} />
-
-          <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/importar" element={<ProtectedRoute><Importar /></ProtectedRoute>} />
-          <Route path="/importar-dados-b3" element={<ProtectedRoute><ImportarDadosB3 /></ProtectedRoute>} />
-          <Route path="/smart-aporte" element={<ProtectedRoute><SmartAporte /></ProtectedRoute>} />
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+        <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+        <Route path="/importar" element={<ProtectedRoute><Importar /></ProtectedRoute>} />
+        <Route path="/importar-dados-b3" element={<ProtectedRoute><ImportarDadosB3 /></ProtectedRoute>} />
+        <Route path="/smart-aporte" element={<ProtectedRoute><SmartAporte /></ProtectedRoute>} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

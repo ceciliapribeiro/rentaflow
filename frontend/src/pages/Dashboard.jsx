@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import {
   TrendingUp, Wallet, DollarSign, PieChart,
   LogOut, RefreshCw, ArrowUpRight, ArrowDownRight,
-  Upload, Zap, Database, Calculator
+  Upload, Zap, Database, Calculator, Building2
 } from 'lucide-react'
 
 export default function Dashboard() {
@@ -277,7 +277,12 @@ export default function Dashboard() {
 >
   <DollarSign size={16} /> Buscar Dividendos
 </button>
-
+	<button
+		onClick={() => navigate('/corretoras')}
+		className="flex items-center gap-2 px-4 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-600"
+		>
+		<Building2 size={16} /> Corretoras
+	</button>
   
   <button
     onClick={() => navigate('/importar-dados-b3')}
