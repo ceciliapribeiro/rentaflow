@@ -258,12 +258,6 @@ export default function Dashboard() {
           </div>
         )}
 
-        {debugInfo && (
-          <div className="bg-yellow-50 border-2 border-yellow-400 rounded-xl p-4 mb-6">
-            <h3 className="font-bold text-yellow-800 mb-2">Debug:</h3>
-            <p className="text-sm text-yellow-900 font-mono break-all">{debugInfo}</p>
-          </div>
-        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div className="bg-white rounded-xl shadow-sm border p-6">
