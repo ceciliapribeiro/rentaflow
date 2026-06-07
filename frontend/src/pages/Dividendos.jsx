@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import {
-  ArrowLeft, DollarSign, Search, AlertTriangle,
-  CheckCircle, Calendar, Loader, TrendingUp
+  ArrowLeft, AlertTriangle, CheckCircle, Search, Loader,
 } from 'lucide-react'
 
 const formatBRL = (v) =>
@@ -25,11 +24,9 @@ export default function Dividendos() {
   const [salvando, setSalvando] = useState(false)
   const [erro, setErro] = useState(null)
 
-  // Dados da carteira
   const [tickers, setTickers] = useState([])
   const [operacoes, setOperacoes] = useState([])
 
-  // Parâmetros da busca
   const hoje = new Date().toISOString().split('T')[0]
   const umAnoAtras = (() => {
     const d = new Date()
@@ -39,8 +36,6 @@ export default function Dividendos() {
   const [dataInicio, setDataInicio] = useState(umAnoAtras)
   const [dataFim, setDataFim] = useState(hoje)
 
-  // Resultado da busca
-  const [proventos, setProventos] = useState([])
   const [stats, setStats] = useState(null)
   const [proventosNovos, setProventosNovos] = useState([])
   const [proventosExistentes, setProventosExistentes] = useState([])
@@ -52,7 +47,6 @@ export default function Dividendos() {
   const carregarDados = async () => {
     setLoading(true)
     try {
-      // 1. Pega tickers únicos da carteira
       const { data: carteira, error: errCart } = await supabase
         .from('carteira')
         .select('ticker, qtde_ideal')
@@ -61,7 +55,6 @@ export default function Dividendos() {
 
       if (errCart) throw errCart
 
-      // 2. Pega tipos de cada ticker da tabela ativos
       const tickersList = (carteira || []).map(c => c.ticker)
       if (tickersList.length === 0) {
         setTickers([])
@@ -85,7 +78,6 @@ export default function Dividendos() {
         tipo: tipoPorTicker[t] || (t.endsWith('11') && t.length >= 5 ? 'FII' : 'Acao'),
       }))
 
-      // 3. Pega operações para reconstruir custódia
       const { data: ops, error: errOps } = await supabase
         .from('operacoes')
         .select('data, ticker, quantidade, operacao')
@@ -116,7 +108,6 @@ export default function Dividendos() {
 
     setErro(null)
     setBuscando(true)
-    setProventos([])
     setStats(null)
     setProventosNovos([])
     setProventosExistentes([])
@@ -149,10 +140,8 @@ export default function Dividendos() {
       if (resultado.erro) throw new Error(resultado.erro)
 
       const encontrados = resultado.encontrados || []
-      setProventos(encontrados)
       setStats(resultado.stats)
 
-      // 4. Verifica quais já estão no banco (dedup)
       if (encontrados.length > 0) {
         const { data: existentes } = await supabase
           .from('dividendos')
@@ -162,9 +151,7 @@ export default function Dividendos() {
           .lte('data_pagamento', dataFim)
 
         const chavesExistentes = new Set(
-          (existentes || []).map(d =>
-            `${d.ticker}|${d.data_pagamento}|${d.tipo_provento}`
-          )
+          (existentes || []).map(d => `${d.ticker}|${d.data_pagamento}|${d.tipo_provento}`)
         )
 
         const novos = []
@@ -198,9 +185,7 @@ export default function Dividendos() {
 
   const toggleTodos = () => {
     const todosSel = proventosNovos.every(p => p.selecionado)
-    setProventosNovos(prev =>
-      prev.map(p => ({ ...p, selecionado: !todosSel }))
-    )
+    setProventosNovos(prev => prev.map(p => ({ ...p, selecionado: !todosSel })))
   }
 
   const handleSalvar = async () => {
@@ -212,8 +197,9 @@ export default function Dividendos() {
 
     setSalvando(true)
     setErro(null)
+
     try {
-      const linhas = aSalvar.map(p => ({
+      const linhasBrutas = aSalvar.map(p => ({
         user_id: user.id,
         ano: parseInt(p.data_pagamento.split('-')[0], 10),
         data_pagamento: p.data_pagamento,
@@ -226,24 +212,54 @@ export default function Dividendos() {
         fonte: p.fonte,
       }))
 
-      const { error } = await supabase
-        .from('dividendos')
-        .upsert(linhas, {
-          onConflict: 'user_id,ticker,data_pagamento,tipo_provento',
-          ignoreDuplicates: false,
-        })
+      const mapaUnico = new Map()
+      let duplicadosInternos = 0
 
-      if (error) throw error
+      for (const linha of linhasBrutas) {
+        const chave = `${linha.user_id}|${linha.ticker}|${linha.data_pagamento}|${linha.tipo_provento}`
+        const existente = mapaUnico.get(chave)
+        if (!existente || linha.valor > existente.valor) {
+          if (existente) duplicadosInternos++
+          mapaUnico.set(chave, linha)
+        } else {
+          duplicadosInternos++
+        }
+      }
 
-      alert(`✅ ${linhas.length} provento(s) salvo(s) com sucesso!`)
+      const linhas = Array.from(mapaUnico.values())
 
-      // Atualiza UI: move salvos para "existentes"
+      if (duplicadosInternos > 0) {
+        console.log(`[INFO] ${duplicadosInternos} duplicata(s) interna(s) consolidada(s).`)
+      }
+
+      const TAMANHO_LOTE = 50
+      let totalSalvo = 0
+
+      for (let i = 0; i < linhas.length; i += TAMANHO_LOTE) {
+        const lote = linhas.slice(i, i + TAMANHO_LOTE)
+        const { error } = await supabase
+          .from('dividendos')
+          .upsert(lote, {
+            onConflict: 'user_id,ticker,data_pagamento,tipo_provento',
+            ignoreDuplicates: false,
+          })
+        if (error) throw error
+        totalSalvo += lote.length
+      }
+
+      let msg = `✅ ${totalSalvo} provento(s) salvo(s) com sucesso!`
+      if (duplicadosInternos > 0) {
+        msg += `\n(${duplicadosInternos} duplicata(s) interna(s) consolidada(s))`
+      }
+      alert(msg)
+
       setProventosExistentes(prev => [
         ...prev,
         ...aSalvar.map(p => ({ ...p, ja_existe: true }))
       ])
       setProventosNovos(prev => prev.filter(p => !p.selecionado))
     } catch (err) {
+      console.error('[ERRO upsert]', err)
       setErro('Erro ao salvar: ' + err.message)
     } finally {
       setSalvando(false)
@@ -275,28 +291,21 @@ export default function Dividendos() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6">
-        {/* Painel de busca */}
         <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
           <h2 className="font-semibold text-gray-700 mb-4">Parâmetros da busca</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Data inicial
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Data inicial</label>
               <input
-                type="date"
-                value={dataInicio}
+                type="date" value={dataInicio}
                 onChange={(e) => setDataInicio(e.target.value)}
                 className="w-full px-3 py-2 border rounded-lg"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Data final
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Data final</label>
               <input
-                type="date"
-                value={dataFim}
+                type="date" value={dataFim}
                 onChange={(e) => setDataFim(e.target.value)}
                 className="w-full px-3 py-2 border rounded-lg"
               />
@@ -312,20 +321,17 @@ export default function Dividendos() {
               </button>
             </div>
           </div>
-
           <div className="mt-4 flex flex-wrap gap-4 text-sm text-gray-500">
             <span><strong>{tickers.length}</strong> tickers na carteira</span>
             <span>•</span>
             <span><strong>{operacoes.length}</strong> operações registradas</span>
-            <span>•</span>
-            <span>Janela: <strong>{Math.round((new Date(dataFim) - new Date(dataInicio)) / 86400000)}</strong> dias</span>
           </div>
         </div>
 
         {erro && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-start gap-3">
             <AlertTriangle className="text-red-500 flex-shrink-0" size={20} />
-            <div className="text-red-700 text-sm">{erro}</div>
+            <div className="text-red-700 text-sm whitespace-pre-wrap">{erro}</div>
           </div>
         )}
 
@@ -338,13 +344,10 @@ export default function Dividendos() {
           </div>
         )}
 
-        {/* Proventos novos (selecionáveis) */}
         {proventosNovos.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border mb-6">
             <div className="p-6 border-b flex items-center justify-between">
-              <h2 className="font-semibold text-gray-700">
-                Proventos novos ({proventosNovos.length})
-              </h2>
+              <h2 className="font-semibold text-gray-700">Proventos novos ({proventosNovos.length})</h2>
               <div className="flex gap-2">
                 <button
                   onClick={toggleTodos}
@@ -382,8 +385,7 @@ export default function Dividendos() {
                     <tr key={i} className="border-b hover:bg-gray-50">
                       <td className="py-2 px-3">
                         <input
-                          type="checkbox"
-                          checked={p.selecionado}
+                          type="checkbox" checked={p.selecionado}
                           onChange={() => toggleSelecao(i)}
                           className="w-4 h-4"
                         />
@@ -391,8 +393,7 @@ export default function Dividendos() {
                       <td className="py-2 px-3 font-medium">{p.ticker}</td>
                       <td className="py-2 px-3">
                         <span className={`text-xs px-2 py-0.5 rounded ${
-                          p.tipo_provento === 'JUROS' ? 'bg-orange-100 text-orange-700' :
-                          'bg-emerald-100 text-emerald-700'
+                          p.tipo_provento === 'JUROS' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-100 text-emerald-700'
                         }`}>{p.tipo_provento}</span>
                       </td>
                       <td className="py-2 px-3 text-gray-600">{formatData(p.data_ex)}</td>
@@ -416,11 +417,10 @@ export default function Dividendos() {
           </div>
         )}
 
-        {/* Proventos já existentes */}
         {proventosExistentes.length > 0 && (
           <div className="bg-yellow-50 rounded-xl border border-yellow-200 p-4 mb-6">
             <h3 className="font-semibold text-yellow-800 mb-2 text-sm">
-              {proventosExistentes.length} provento(s) já registrado(s) no banco — ignorados
+              {proventosExistentes.length} provento(s) já registrado(s) — ignorados
             </h3>
             <div className="text-xs text-yellow-700">
               {proventosExistentes.slice(0, 5).map((p, i) => (
@@ -435,7 +435,6 @@ export default function Dividendos() {
           </div>
         )}
 
-        {/* Mensagem se busca foi feita mas sem resultados */}
         {stats && proventosNovos.length === 0 && proventosExistentes.length === 0 && (
           <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
             <p className="text-blue-700 text-sm">
