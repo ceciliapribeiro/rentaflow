@@ -1,3 +1,4 @@
+import Operacoes from './pages/Operacoes'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './contexts/AuthContext'
 import Login from './pages/Login'
@@ -27,6 +28,7 @@ export default function App() {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
+		<Route path="/operacoes" element={<ProtectedRoute><Operacoes /></ProtectedRoute>} />
 		<Route path="/corretoras" element={<ProtectedRoute><Corretoras /></ProtectedRoute>} />		
 		<Route path="/dividendos" element={<ProtectedRoute><Dividendos /></ProtectedRoute>} />
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
