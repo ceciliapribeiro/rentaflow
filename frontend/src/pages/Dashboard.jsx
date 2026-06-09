@@ -16,10 +16,8 @@ export default function Dashboard() {
     patrimonio: 0, totalAportes: 0, totalDividendos: 0, totalAtivos: 0,
   })
   const [ativos, setAtivos] = useState([])
-  const [debugInfo, setDebugInfo] = useState('')
   const [atualizandoCotacoes, setAtualizandoCotacoes] = useState(false)
   const [statusCotacao, setStatusCotacao] = useState(null)
-
   const [corretoras, setCorretoras] = useState([])
   const [filtroCorretora, setFiltroCorretora] = useState('todas')
 
@@ -33,27 +31,22 @@ export default function Dashboard() {
 
   const carregarCorretoras = async () => {
     const { data } = await supabase
-      .from('corretoras')
-      .select('id, nome, cor')
-      .eq('user_id', user.id)
-      .order('nome')
+      .from('corretoras').select('id, nome, cor')
+      .eq('user_id', user.id).order('nome')
     setCorretoras(data || [])
   }
 
   const carregarResumo = async () => {
     setLoading(true)
-    let debug = []
     try {
-      debug.push(`User: ${user?.id?.substring(0, 8) || '-'}`)
-      debug.push(`Filtro: ${filtroCorretora === 'todas' ? 'Todas' : `Corr ${filtroCorretora}`}`)
-
+      // 1. Operações filtradas por corretora (se aplicável)
       let queryOps = supabase.from('operacoes').select('*').eq('user_id', user.id)
       if (filtroCorretora !== 'todas') {
         queryOps = queryOps.eq('corretora_id', filtroCorretora)
       }
       const { data: operacoes } = await queryOps
-      debug.push(`Ops: ${operacoes?.length || 0}`)
 
+      // 2. Reconstrói custódia REAL pelas operações (compras − vendas)
       const custoMedio = {}
       if (operacoes && operacoes.length > 0) {
         const opsOrdenadas = [...operacoes].sort((a, b) => a.data.localeCompare(b.data))
@@ -61,12 +54,12 @@ export default function Dashboard() {
           const t = op.ticker
           const q = Number(op.quantidade) || 0
           const p = Number(op.preco_unitario) || 0
-          const tipoOp = (op.operacao || '').toUpperCase()
+          const tipoOp = String(op.operacao || '').toUpperCase().trim()
           if (!custoMedio[t]) custoMedio[t] = { qtde: 0, custo: 0 }
-          if (tipoOp === 'COMPRA') {
+          if (tipoOp.includes('COMPRA')) {
             custoMedio[t].qtde += q
             custoMedio[t].custo += q * p
-          } else if (tipoOp === 'VENDA') {
+          } else if (tipoOp.includes('VENDA')) {
             const pm = custoMedio[t].qtde > 0 ? custoMedio[t].custo / custoMedio[t].qtde : 0
             custoMedio[t].qtde -= q
             custoMedio[t].custo -= q * pm
@@ -76,9 +69,10 @@ export default function Dashboard() {
         }
       }
 
+      // 3. SOMENTE tickers com saldo > 0
       const tickersComSaldo = Object.keys(custoMedio).filter(t => custoMedio[t].qtde > 0)
 
-
+      // 4. Busca preços/dados dos ativos com saldo
       let precosAtivos = {}
       if (tickersComSaldo.length > 0) {
         const { data: ativosBD } = await supabase
@@ -97,6 +91,7 @@ export default function Dashboard() {
         }
       }
 
+      // 5. Aportes filtrados
       let queryApt = supabase.from('aportes').select('valor').eq('user_id', user.id)
       if (filtroCorretora !== 'todas') {
         queryApt = queryApt.eq('corretora_id', filtroCorretora)
@@ -104,8 +99,8 @@ export default function Dashboard() {
       const { data: aportesRows } = await queryApt
       const totalAportado = aportesRows
         ? aportesRows.reduce((s, a) => s + Number(a.valor || 0), 0) : 0
-      debug.push(`Apt: ${aportesRows?.length || 0}`)
 
+      // 6. Dividendos filtrados
       let queryDiv = supabase.from('dividendos').select('valor').eq('user_id', user.id)
       if (filtroCorretora !== 'todas') {
         queryDiv = queryDiv.eq('corretora_id', filtroCorretora)
@@ -113,8 +108,8 @@ export default function Dashboard() {
       const { data: divsRows } = await queryDiv
       const totalDividendos = divsRows
         ? divsRows.reduce((s, d) => s + Number(d.valor || 0), 0) : 0
-      debug.push(`Div: ${divsRows?.length || 0}`)
 
+      // 7. Lista APENAS com tickers de saldo > 0
       const listaAtivos = []
       let patrimonio = 0
 
@@ -130,35 +125,21 @@ export default function Dashboard() {
           tipo = ticker.endsWith('11') && ticker.length >= 5 ? 'FII' : 'Acao'
         }
         listaAtivos.push({
-          ticker,
-          quantidade: qtde,
-          preco_medio: pm,
-          preco_atual: info.preco,
-          valor_atual: valorAtual,
-          valor_investido: custoInvestido,
-          tipo,
-          dy: info.dy,
-          pvp: info.pvp,
-          razao_social: info.razao_social,
+          ticker, quantidade: qtde, preco_medio: pm, preco_atual: info.preco,
+          valor_atual: valorAtual, valor_investido: custoInvestido,
+          tipo, dy: info.dy, pvp: info.pvp, razao_social: info.razao_social,
           tem_preco: info.preco > 0,
         })
         patrimonio += valorAtual > 0 ? valorAtual : custoInvestido
       }
 
-      debug.push(`Ativos: ${listaAtivos.length}`)
-      debug.push(`Patr: R$ ${patrimonio.toFixed(0)}`)
-
       setResumo({
-        patrimonio,
-        totalAportes: totalAportado,
-        totalDividendos,
+        patrimonio, totalAportes: totalAportado, totalDividendos,
         totalAtivos: listaAtivos.length,
       })
       setAtivos(listaAtivos)
-      setDebugInfo(debug.join(' | '))
     } catch (err) {
-      console.error(err)
-      setDebugInfo(debug.join(' | ') + ` | ERRO: ${err.message}`)
+      console.error('Erro:', err)
     } finally {
       setLoading(false)
     }
@@ -171,28 +152,22 @@ export default function Dashboard() {
     }
     setAtualizandoCotacoes(true)
     setStatusCotacao({ etapa: 'iniciando', mensagem: 'Buscando preços...' })
-
     try {
       const tickers = ativos.map(a => a.ticker)
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-
       const response = await fetch(`${SUPABASE_URL}/functions/v1/atualizar-cotacoes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tickers }),
       })
-
       const resultado = await response.json()
       if (!response.ok) throw new Error(resultado.erro || 'Erro')
-
       setStatusCotacao({
         etapa: 'sucesso',
         mensagem: `${resultado.sucesso}/${resultado.total} atualizados | ${resultado.falhas} falhas`,
-        detalhes: resultado,
       })
       await carregarResumo()
     } catch (err) {
-      console.error('Erro ao atualizar:', err)
       setStatusCotacao({ etapa: 'erro', mensagem: err.message })
     } finally {
       setAtualizandoCotacoes(false)
@@ -204,7 +179,6 @@ export default function Dashboard() {
   const formatBRL = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
   const rentabilidade = resumo.totalAportes > 0
     ? ((resumo.patrimonio - resumo.totalAportes) / resumo.totalAportes * 100) : 0
-
   const corretoraSelecionada = corretoras.find(c => String(c.id) === String(filtroCorretora))
 
   return (
@@ -258,7 +232,6 @@ export default function Dashboard() {
             </button>
           </div>
         )}
-
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <div className="bg-white rounded-xl shadow-sm border p-6">
@@ -322,6 +295,12 @@ export default function Dashboard() {
                   {atualizandoCotacoes ? 'Atualizando...' : 'Atualizar Cotações'}
                 </button>
                 <button
+                  onClick={() => navigate('/operacoes')}
+                  className="flex items-center gap-2 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-500"
+                >
+                  <TrendingUp size={16} /> Operações
+                </button>
+                <button
                   onClick={() => navigate('/dividendos')}
                   className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-500"
                 >
@@ -345,13 +324,6 @@ export default function Dashboard() {
                 >
                   <Database size={16} /> Catálogo B3
                 </button>
-				<button
-  onClick={() => navigate('/operacoes')}
-  className="flex items-center gap-2 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-500"
->
-  <TrendingUp size={16} /> Operações
-</button>
-
                 <button onClick={handleImportar} className="flex items-center gap-2 px-4 py-2 text-sm bg-green-700 text-white rounded-lg hover:bg-green-600">
                   <Upload size={16} /> Importar
                 </button>
@@ -389,14 +361,14 @@ export default function Dashboard() {
                       ? ((a.preco_atual - a.preco_medio) / a.preco_medio * 100) : 0
                     return (
                       <tr key={i} className="border-b hover:bg-gray-50">
-					<td className="py-2 px-3 font-medium">
-						<button
-						onClick={() => navigate(`/ativo/${a.ticker}`)}
-					className="text-gray-800 hover:text-blue-600 hover:underline"
-					>
-					{a.ticker}
-				</button>
-					</td>
+                        <td className="py-2 px-3 font-medium">
+                          <button
+                            onClick={() => navigate(`/ativo/${a.ticker}`)}
+                            className="text-gray-800 hover:text-blue-600 hover:underline"
+                          >
+                            {a.ticker}
+                          </button>
+                        </td>
                         <td className="py-2 px-3">
                           <span className={`px-2 py-0.5 rounded text-xs font-medium ${
                             a.tipo === 'FII' ? 'bg-purple-100 text-purple-700' :
@@ -449,16 +421,10 @@ export default function Dashboard() {
                 </button>
               )}
               <button
-                onClick={() => navigate('/smart-aporte')}
-                className="px-4 py-2 bg-amber-700 text-white text-sm rounded-lg hover:bg-amber-600 flex items-center gap-2"
+                onClick={() => navigate('/operacoes')}
+                className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-500 flex items-center gap-2"
               >
-                <Calculator size={16} /> Smart Aporte
-              </button>
-              <button
-                onClick={() => navigate('/importar-dados-b3')}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-500 text-sm"
-              >
-                <Database size={16} /> Catálogo B3
+                <TrendingUp size={16} /> Lançar Operação
               </button>
               <button
                 onClick={handleImportar}
