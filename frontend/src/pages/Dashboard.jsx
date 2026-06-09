@@ -76,7 +76,8 @@ export default function Dashboard() {
         }
       }
 
-      const tickersComSaldo = Object.keys(custoMedio).filter(t => custoMedio[t].qtde > 0.01)
+      const tickersComSaldo = Object.keys(custoMedio).filter(t => custoMedio[t].qtde > 0)
+
 
       let precosAtivos = {}
       if (tickersComSaldo.length > 0) {
