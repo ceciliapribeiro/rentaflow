@@ -32,15 +32,14 @@ export default function Operacoes() {
   // Form state
   const [editandoId, setEditandoId] = useState(null)
   const [criandoNova, setCriandoNova] = useState(false)
-  const [form, setForm] = useState({
-    data: new Date().toISOString().split('T')[0],
-    ticker: '',
-    quantidade: '',
-    preco_unitario: '',
-    operacao: 'COMPRA',
-    tipo_ativo: 'Acao',
-    corretora_id: '',
-  })
+	const [form, setForm] = useState({
+		data: new Date().toISOString().split('T')[0],
+		ticker: '',
+		quantidade: '',
+		preco_unitario: '',
+		operacao: 'COMPRA',
+		corretora_id: '',
+})
 
   useEffect(() => {
     if (user) carregar()
@@ -76,35 +75,35 @@ export default function Operacoes() {
     }
   }
 
-  const limparForm = () => {
-    setForm({
-      data: new Date().toISOString().split('T')[0],
-      ticker: '',
-      quantidade: '',
-      preco_unitario: '',
-      operacao: 'COMPRA',
-      tipo_ativo: 'Acao',
-      corretora_id: corretoras.length > 0
-        ? String(corretoras.find(c => c.nome === 'Inter')?.id || corretoras[0].id)
-        : '',
-    })
-    setEditandoId(null)
-    setCriandoNova(false)
-  }
+const limparForm = () => {
+  setForm({
+    data: new Date().toISOString().split('T')[0],
+    ticker: '',
+    quantidade: '',
+    preco_unitario: '',
+    operacao: 'COMPRA',
+    corretora_id: corretoras.length > 0
+      ? String(corretoras.find(c => c.nome === 'Inter')?.id || corretoras[0].id)
+      : '',
+  })
+  setEditandoId(null)
+  setCriandoNova(false)
+}
 
-  const iniciarEdicao = (op) => {
-    setEditandoId(op.id)
-    setCriandoNova(false)
-    setForm({
-      data: op.data,
-      ticker: op.ticker,
-      quantidade: String(op.quantidade),
-      preco_unitario: String(op.preco_unitario),
-      operacao: op.operacao,
-      tipo_ativo: op.tipo_ativo || 'Acao',
-      corretora_id: String(op.corretora_id || ''),
-    })
-  }
+
+const iniciarEdicao = (op) => {
+  setEditandoId(op.id)
+  setCriandoNova(false)
+  setForm({
+    data: op.data,
+    ticker: op.ticker,
+    quantidade: String(op.quantidade),
+    preco_unitario: String(op.preco_unitario),
+    operacao: op.operacao,
+    corretora_id: String(op.corretora_id || ''),
+  })
+}
+
 
   const validarForm = () => {
     if (!form.data) return 'Data é obrigatória'
@@ -128,17 +127,34 @@ export default function Operacoes() {
 
     try {
       const ticker = form.ticker.trim().toUpperCase()
-      const dados = {
-        user_id: user.id,
-        data: form.data,
-        ticker,
-        quantidade: parseFloat(form.quantidade),
-        preco_unitario: parseFloat(form.preco_unitario),
-        operacao: form.operacao,
-        tipo_ativo: form.tipo_ativo,
-        corretora_id: parseInt(form.corretora_id, 10),
-        origem: editandoId ? 'manual_edit' : 'manual',
-      }
+// Busca o tipo do ativo no catálogo Dados B3 (tabela ativos)
+let tipoAtivo = 'Acao' // fallback
+try {
+  const { data: ativoBD } = await supabase
+    .from('ativos').select('tipo')
+    .eq('ticker', ticker).maybeSingle()
+  if (ativoBD?.tipo) {
+    tipoAtivo = ativoBD.tipo
+  } else {
+    // Inferência: FII se termina em 11 com 6 chars, senão Ação
+    tipoAtivo = ticker.endsWith('11') && ticker.length === 6 ? 'FII' : 'Acao'
+  }
+} catch {
+  tipoAtivo = ticker.endsWith('11') && ticker.length === 6 ? 'FII' : 'Acao'
+}
+
+const dados = {
+  user_id: user.id,
+  data: form.data,
+  ticker,
+  quantidade: parseFloat(form.quantidade),
+  preco_unitario: parseFloat(form.preco_unitario),
+  operacao: form.operacao,
+  tipo_ativo: tipoAtivo,
+  corretora_id: parseInt(form.corretora_id, 10),
+  origem: editandoId ? 'manual_edit' : 'manual',
+}
+
 
       if (editandoId) {
         const { error } = await supabase
@@ -267,20 +283,6 @@ export default function Operacoes() {
                   <option value="VENDA">VENDA</option>
                 </select>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo *</label>
-                <select
-                  value={form.tipo_ativo}
-                  onChange={(e) => setForm({ ...form, tipo_ativo: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg bg-white"
-                >
-                  <option value="Acao">Ação</option>
-                  <option value="FII">FII</option>
-                  <option value="BDR">BDR</option>
-                  <option value="ETF">ETF</option>
-                </select>
-              </div>
-              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Quantidade *</label>
                 <input
                   type="number" value={form.quantidade}
