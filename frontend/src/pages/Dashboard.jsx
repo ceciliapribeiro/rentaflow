@@ -2,14 +2,15 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import Header from '../components/Header'
 import {
   TrendingUp, Wallet, DollarSign, PieChart,
-  LogOut, RefreshCw, ArrowUpRight, ArrowDownRight,
-  Upload, Zap, Database, Calculator, Building2
+  RefreshCw, ArrowUpRight, ArrowDownRight,
+  Upload, Zap, Database, Calculator, ChevronRight,
 } from 'lucide-react'
 
 export default function Dashboard() {
-  const { user, signOut } = useAuth()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
   const [resumo, setResumo] = useState({
@@ -18,66 +19,21 @@ export default function Dashboard() {
   const [ativos, setAtivos] = useState([])
   const [atualizandoCotacoes, setAtualizandoCotacoes] = useState(false)
   const [statusCotacao, setStatusCotacao] = useState(null)
-  const [corretoras, setCorretoras] = useState([])
-  const [filtroCorretora, setFiltroCorretora] = useState('todas')
 
-  useEffect(() => {
-    if (user) carregarCorretoras()
-  }, [user])
-
-  useEffect(() => {
-    if (user) carregarResumo()
-  }, [user, filtroCorretora])
-
-  const carregarCorretoras = async () => {
-    const { data } = await supabase
-      .from('corretoras').select('id, nome, cor')
-      .eq('user_id', user.id).order('nome')
-    setCorretoras(data || [])
-  }
+  useEffect(() => { if (user) carregarResumo() }, [user])
 
   const carregarResumo = async () => {
     setLoading(true)
     try {
-      // 1. Operações filtradas por corretora (se aplicável)
-      let queryOps = supabase.from('operacoes').select('*').eq('user_id', user.id)
-      if (filtroCorretora !== 'todas') {
-        queryOps = queryOps.eq('corretora_id', filtroCorretora)
-      }
-      const { data: operacoes } = await queryOps
+      const { data: carteira } = await supabase
+        .from('carteira').select('*').eq('user_id', user.id)
 
-      // 2. Reconstrói custódia REAL pelas operações (compras − vendas)
-      const custoMedio = {}
-      if (operacoes && operacoes.length > 0) {
-        const opsOrdenadas = [...operacoes].sort((a, b) => a.data.localeCompare(b.data))
-        for (const op of opsOrdenadas) {
-          const t = op.ticker
-          const q = Number(op.quantidade) || 0
-          const p = Number(op.preco_unitario) || 0
-          const tipoOp = String(op.operacao || '').toUpperCase().trim()
-          if (!custoMedio[t]) custoMedio[t] = { qtde: 0, custo: 0 }
-          if (tipoOp.includes('COMPRA')) {
-            custoMedio[t].qtde += q
-            custoMedio[t].custo += q * p
-          } else if (tipoOp.includes('VENDA')) {
-            const pm = custoMedio[t].qtde > 0 ? custoMedio[t].custo / custoMedio[t].qtde : 0
-            custoMedio[t].qtde -= q
-            custoMedio[t].custo -= q * pm
-            if (custoMedio[t].qtde < 0) custoMedio[t].qtde = 0
-            if (custoMedio[t].custo < 0) custoMedio[t].custo = 0
-          }
-        }
-      }
-
-      // 3. SOMENTE tickers com saldo > 0
-      const tickersComSaldo = Object.keys(custoMedio).filter(t => custoMedio[t].qtde > 0)
-
-      // 4. Busca preços/dados dos ativos com saldo
       let precosAtivos = {}
-      if (tickersComSaldo.length > 0) {
+      if (carteira && carteira.length > 0) {
+        const tickers = carteira.map(c => c.ticker)
         const { data: ativosBD } = await supabase
           .from('ativos').select('ticker, preco, tipo, dy, pvp, razao_social')
-          .in('ticker', tickersComSaldo)
+          .in('ticker', tickers)
         if (ativosBD) {
           ativosBD.forEach(a => {
             precosAtivos[a.ticker] = {
@@ -91,55 +47,82 @@ export default function Dashboard() {
         }
       }
 
-      // 5. Aportes filtrados
-      let queryApt = supabase.from('aportes').select('valor').eq('user_id', user.id)
-      if (filtroCorretora !== 'todas') {
-        queryApt = queryApt.eq('corretora_id', filtroCorretora)
+      const { data: operacoes } = await supabase
+        .from('operacoes').select('*').eq('user_id', user.id)
+
+      const custoMedio = {}
+      if (operacoes && operacoes.length > 0) {
+        for (const op of operacoes) {
+          const t = op.ticker
+          const q = Number(op.quantidade) || 0
+          const p = Number(op.preco_unitario) || 0
+          const tipoOp = (op.operacao || '').toUpperCase()
+          if (!custoMedio[t]) custoMedio[t] = { qtde: 0, custo: 0 }
+          if (tipoOp === 'COMPRA') {
+            custoMedio[t].qtde += q
+            custoMedio[t].custo += q * p
+          } else if (tipoOp === 'VENDA') {
+            const pm = custoMedio[t].qtde > 0 ? custoMedio[t].custo / custoMedio[t].qtde : 0
+            custoMedio[t].qtde -= q
+            custoMedio[t].custo -= q * pm
+            if (custoMedio[t].qtde < 0) custoMedio[t].qtde = 0
+            if (custoMedio[t].custo < 0) custoMedio[t].custo = 0
+          }
+        }
       }
-      const { data: aportesRows } = await queryApt
+
+      const { data: aportesRows } = await supabase
+        .from('aportes').select('valor').eq('user_id', user.id)
       const totalAportado = aportesRows
         ? aportesRows.reduce((s, a) => s + Number(a.valor || 0), 0) : 0
 
-      // 6. Dividendos filtrados
-      let queryDiv = supabase.from('dividendos').select('valor').eq('user_id', user.id)
-      if (filtroCorretora !== 'todas') {
-        queryDiv = queryDiv.eq('corretora_id', filtroCorretora)
-      }
-      const { data: divsRows } = await queryDiv
+      const { data: divsRows } = await supabase
+        .from('dividendos').select('valor').eq('user_id', user.id)
       const totalDividendos = divsRows
         ? divsRows.reduce((s, d) => s + Number(d.valor || 0), 0) : 0
 
-      // 7. Lista APENAS com tickers de saldo > 0
       const listaAtivos = []
       let patrimonio = 0
 
-      for (const ticker of tickersComSaldo) {
-        const cm = custoMedio[ticker]
-        const qtde = cm.qtde
-        const pm = cm.qtde > 0 ? cm.custo / cm.qtde : 0
-        const info = precosAtivos[ticker] || { preco: 0, tipo: null, dy: 0, pvp: 0, razao_social: null }
-        const valorAtual = qtde * info.preco
-        const custoInvestido = qtde * pm
-        let tipo = info.tipo
-        if (!tipo) {
-          tipo = ticker.endsWith('11') && ticker.length >= 5 ? 'FII' : 'Acao'
+      if (carteira && carteira.length > 0) {
+        for (const c of carteira) {
+          const qtde = Number(c.qtde_ideal) || 0
+          if (qtde <= 0) continue
+          const info = precosAtivos[c.ticker] || { preco: 0, tipo: null, dy: 0, pvp: 0, razao_social: null }
+          const valorAtual = qtde * info.preco
+          const cm = custoMedio[c.ticker] || { qtde: 0, custo: 0 }
+          const pm = cm.qtde > 0 ? cm.custo / cm.qtde : 0
+          const custoInvestido = qtde * pm
+          let tipo = info.tipo
+          if (!tipo) {
+            tipo = c.ticker.endsWith('11') && c.ticker.length >= 5 ? 'FII' : 'Acao'
+          }
+          listaAtivos.push({
+            ticker: c.ticker,
+            quantidade: qtde,
+            preco_medio: pm,
+            preco_atual: info.preco,
+            valor_atual: valorAtual,
+            valor_investido: custoInvestido,
+            tipo,
+            dy: info.dy,
+            pvp: info.pvp,
+            razao_social: info.razao_social,
+            tem_preco: info.preco > 0,
+          })
+          patrimonio += valorAtual > 0 ? valorAtual : custoInvestido
         }
-        listaAtivos.push({
-          ticker, quantidade: qtde, preco_medio: pm, preco_atual: info.preco,
-          valor_atual: valorAtual, valor_investido: custoInvestido,
-          tipo, dy: info.dy, pvp: info.pvp, razao_social: info.razao_social,
-          tem_preco: info.preco > 0,
-        })
-        patrimonio += valorAtual > 0 ? valorAtual : custoInvestido
       }
 
       setResumo({
-        patrimonio, totalAportes: totalAportado, totalDividendos,
+        patrimonio,
+        totalAportes: totalAportado,
+        totalDividendos,
         totalAtivos: listaAtivos.length,
       })
       setAtivos(listaAtivos)
     } catch (err) {
-      console.error('Erro:', err)
+      console.error('Erro ao carregar resumo:', err)
     } finally {
       setLoading(false)
     }
@@ -152,246 +135,214 @@ export default function Dashboard() {
     }
     setAtualizandoCotacoes(true)
     setStatusCotacao({ etapa: 'iniciando', mensagem: 'Buscando preços...' })
+
     try {
       const tickers = ativos.map(a => a.ticker)
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
+
       const response = await fetch(`${SUPABASE_URL}/functions/v1/atualizar-cotacoes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tickers }),
       })
+
       const resultado = await response.json()
       if (!response.ok) throw new Error(resultado.erro || 'Erro')
+
       setStatusCotacao({
         etapa: 'sucesso',
         mensagem: `${resultado.sucesso}/${resultado.total} atualizados | ${resultado.falhas} falhas`,
+        detalhes: resultado,
       })
       await carregarResumo()
     } catch (err) {
+      console.error('Erro ao atualizar:', err)
       setStatusCotacao({ etapa: 'erro', mensagem: err.message })
     } finally {
       setAtualizandoCotacoes(false)
     }
   }
 
-  const handleLogout = async () => { await signOut(); navigate('/login') }
-  const handleImportar = () => navigate('/importar')
-  const formatBRL = (v) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
+  const formatBRL = (v) => new Intl.NumberFormat('pt-BR', {
+    style: 'currency', currency: 'BRL',
+  }).format(v)
+
   const rentabilidade = resumo.totalAportes > 0
     ? ((resumo.patrimonio - resumo.totalAportes) / resumo.totalAportes * 100) : 0
-  const corretoraSelecionada = corretoras.find(c => String(c.id) === String(filtroCorretora))
+
+  // Cards clicáveis — cada um navega para sua página
+  const CardClicavel = ({ titulo, valor, sub, icon: Icon, cor, destino, extraClasses = '' }) => (
+    <button
+      onClick={() => navigate(destino)}
+      className={`bg-white rounded-xl shadow-sm border p-6 text-left hover:border-green-500 hover:shadow-md transition-all group ${extraClasses}`}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-gray-500 text-sm font-medium">{titulo}</span>
+        <div className="flex items-center gap-1">
+          <Icon className={cor} size={20} />
+          <ChevronRight className="text-gray-300 group-hover:text-green-600 transition" size={16} />
+        </div>
+      </div>
+      <p className="text-2xl font-bold text-gray-800">{loading ? '...' : valor}</p>
+      {sub && <div className="mt-1 text-sm">{sub}</div>}
+    </button>
+  )
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-green-800 text-white">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">RentaFlow</h1>
-            <p className="text-green-200 text-sm">Gestão de Dividendos e Renda Passiva</p>
-          </div>
-          <div className="flex items-center gap-4">
-            <span className="text-green-200 text-sm hidden sm:block">{user?.email}</span>
-            <button onClick={carregarResumo} className="p-2 hover:bg-green-700 rounded-lg">
-              <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
-            </button>
-            <button onClick={handleLogout} className="flex items-center gap-2 bg-green-700 hover:bg-green-600 px-3 py-2 rounded-lg text-sm">
-              <LogOut size={16} /> Sair
-            </button>
-          </div>
-        </div>
-      </header>
+      <Header
+        titulo="Dashboard"
+        subtitulo="Visão geral da sua carteira"
+        mostrarImportar={true}
+      />
 
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {corretoras.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap items-center gap-3">
-            <Building2 size={20} className="text-slate-700 flex-shrink-0" />
-            <span className="text-sm font-medium text-gray-700">Visualizar:</span>
-            <select
-              value={filtroCorretora}
-              onChange={(e) => setFiltroCorretora(e.target.value)}
-              className="px-3 py-1.5 border rounded-lg text-sm bg-white"
-            >
-              <option value="todas">Todas as corretoras</option>
-              {corretoras.map(c => (
-                <option key={c.id} value={c.id}>{c.nome}</option>
-              ))}
-            </select>
-            {filtroCorretora !== 'todas' && corretoraSelecionada && (
-              <div className="flex items-center gap-2 px-3 py-1 rounded-lg" style={{ backgroundColor: `${corretoraSelecionada.cor}20` }}>
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: corretoraSelecionada.cor || '#6b7280' }} />
-                <span className="text-xs font-medium" style={{ color: corretoraSelecionada.cor }}>
-                  {corretoraSelecionada.nome}
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {/* 4 cards clicáveis */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <CardClicavel
+            titulo="Patrimônio"
+            valor={formatBRL(resumo.patrimonio)}
+            sub={
+              resumo.totalAportes > 0 && (
+                <span className={`flex items-center gap-1 ${rentabilidade >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {rentabilidade >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                  {rentabilidade.toFixed(2)}% vs aportado
                 </span>
-              </div>
-            )}
-            <button
-              onClick={() => navigate('/corretoras')}
-              className="ml-auto text-xs text-gray-500 hover:text-gray-700 underline"
-            >
-              Gerenciar corretoras
-            </button>
-          </div>
-        )}
+              )
+            }
+            icon={PieChart}
+            cor="text-purple-600"
+            destino="/patrimonio"
+          />
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <div className="bg-white rounded-xl shadow-sm border p-6">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-500 text-sm font-medium">Patrimônio</span>
-              <Wallet className="text-green-600" size={20} />
-            </div>
-            <p className="text-2xl font-bold text-gray-800">{loading ? '...' : formatBRL(resumo.patrimonio)}</p>
-            <div className={`flex items-center gap-1 mt-1 text-sm ${rentabilidade >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {rentabilidade >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-              {rentabilidade.toFixed(2)}% rentabilidade
-            </div>
-          </div>
+          <CardClicavel
+            titulo="Total Aportado"
+            valor={formatBRL(resumo.totalAportes)}
+            sub={<span className="text-gray-500">Veja todos os aportes</span>}
+            icon={Wallet}
+            cor="text-blue-600"
+            destino="/aportes"
+          />
 
-          <div className="bg-white rounded-xl shadow-sm border p-6">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-500 text-sm font-medium">Total Aportado</span>
-              <TrendingUp className="text-blue-600" size={20} />
-            </div>
-            <p className="text-2xl font-bold text-gray-800">{loading ? '...' : formatBRL(resumo.totalAportes)}</p>
-            <p className="text-gray-400 text-sm mt-1">Capital investido</p>
-          </div>
+          <CardClicavel
+            titulo="Dividendos"
+            valor={formatBRL(resumo.totalDividendos)}
+            sub={<span className="text-gray-500">Histórico completo</span>}
+            icon={DollarSign}
+            cor="text-green-600"
+            destino="/dividendos"
+          />
 
-          <div className="bg-white rounded-xl shadow-sm border p-6">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-500 text-sm font-medium">Dividendos</span>
-              <DollarSign className="text-emerald-600" size={20} />
-            </div>
-            <p className="text-2xl font-bold text-gray-800">{loading ? '...' : formatBRL(resumo.totalDividendos)}</p>
-            <p className="text-gray-400 text-sm mt-1">Total recebido</p>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm border p-6">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-500 text-sm font-medium">Ativos</span>
-              <PieChart className="text-purple-600" size={20} />
-            </div>
-            <p className="text-2xl font-bold text-gray-800">{loading ? '...' : resumo.totalAtivos}</p>
-            <p className="text-gray-400 text-sm mt-1">Na carteira</p>
-          </div>
+          <CardClicavel
+            titulo="Ativos"
+            valor={String(resumo.totalAtivos)}
+            sub={<span className="text-gray-500">Ver operações</span>}
+            icon={TrendingUp}
+            cor="text-amber-600"
+            destino="/operacoes"
+          />
         </div>
 
-        {ativos.length > 0 ? (
-          <div className="bg-white rounded-xl shadow-sm border p-6 mb-8">
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-              <h2 className="text-lg font-semibold text-gray-700">
-                Minha Carteira
-                {filtroCorretora !== 'todas' && corretoraSelecionada && (
-                  <span className="ml-2 text-sm font-normal text-gray-500">
-                    — {corretoraSelecionada.nome}
-                  </span>
-                )}
-              </h2>
-              <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={atualizarCotacoes}
-                  disabled={atualizandoCotacoes}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50"
-                >
-                  <Zap size={16} className={atualizandoCotacoes ? 'animate-pulse' : ''} />
-                  {atualizandoCotacoes ? 'Atualizando...' : 'Atualizar Cotações'}
-                </button>
-                <button
-                  onClick={() => navigate('/operacoes')}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-500"
-                >
-                  <TrendingUp size={16} /> Operações
-                </button>
-                <button
-                  onClick={() => navigate('/dividendos')}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-500"
-                >
-                  <DollarSign size={16} /> Dividendos
-                </button>
-                <button
-                  onClick={() => navigate('/smart-aporte')}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-amber-700 text-white rounded-lg hover:bg-amber-600"
-                >
-                  <Calculator size={16} /> Smart Aporte
-                </button>
-                <button
-                  onClick={() => navigate('/corretoras')}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-slate-700 text-white rounded-lg hover:bg-slate-600"
-                >
-                  <Building2 size={16} /> Corretoras
-                </button>
-                <button
-                  onClick={() => navigate('/importar-dados-b3')}
-                  className="flex items-center gap-2 px-4 py-2 text-sm bg-purple-600 text-white rounded-lg hover:bg-purple-500"
-                >
-                  <Database size={16} /> Catálogo B3
-                </button>
-                <button onClick={handleImportar} className="flex items-center gap-2 px-4 py-2 text-sm bg-green-700 text-white rounded-lg hover:bg-green-600">
-                  <Upload size={16} /> Importar
-                </button>
-              </div>
+        {/* Carteira detalhada */}
+        <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-800">Minha Carteira</h3>
+              <p className="text-xs text-gray-500">Clique no ticker para ver detalhes</p>
             </div>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={atualizarCotacoes}
+                disabled={atualizandoCotacoes || ativos.length === 0}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm disabled:opacity-50"
+              >
+                <RefreshCw size={14} className={atualizandoCotacoes ? 'animate-spin' : ''} />
+                {atualizandoCotacoes ? 'Atualizando...' : 'Atualizar Cotações'}
+              </button>
+              <button
+                onClick={() => navigate('/smart-aporte')}
+                className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm"
+              >
+                <Zap size={14} /> Smart Aporte
+              </button>
+              <button
+                onClick={() => navigate('/importar-dados-b3')}
+                className="flex items-center gap-2 bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg text-sm"
+              >
+                <Database size={14} /> Catálogo B3
+              </button>
+            </div>
+          </div>
 
-            {statusCotacao && (
-              <div className={`mb-4 p-3 rounded-lg text-sm ${
-                statusCotacao.etapa === 'erro' ? 'bg-red-50 text-red-700 border border-red-200' :
-                statusCotacao.etapa === 'sucesso' ? 'bg-green-50 text-green-700 border border-green-200' :
-                'bg-blue-50 text-blue-700 border border-blue-200'
-              }`}>
-                <strong>Cotações:</strong> {statusCotacao.mensagem}
-              </div>
-            )}
+          {/* Status da atualização */}
+          {statusCotacao && (
+            <div className={`px-6 py-2 text-sm border-b ${
+              statusCotacao.etapa === 'erro' ? 'bg-red-50 text-red-700' :
+              statusCotacao.etapa === 'sucesso' ? 'bg-green-50 text-green-700' :
+              'bg-blue-50 text-blue-700'
+            }`}>
+              Cotações: {statusCotacao.mensagem}
+            </div>
+          )}
 
+          {loading ? (
+            <div className="p-8 text-center text-gray-500">Carregando carteira...</div>
+          ) : ativos.length === 0 ? (
+            <div className="p-12 text-center">
+              <Calculator className="mx-auto text-gray-300 mb-3" size={48} />
+              <p className="text-gray-700 font-semibold mb-2">Carteira vazia</p>
+              <p className="text-gray-500 text-sm mb-4">Importe suas operações para começar.</p>
+              <button
+                onClick={() => navigate('/importar')}
+                className="px-4 py-2 bg-green-700 text-white text-sm rounded-lg hover:bg-green-600 inline-flex items-center gap-2"
+              >
+                <Upload size={16} /> Importar dados
+              </button>
+            </div>
+          ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-gray-500">
+                <thead className="bg-gray-50 border-b">
+                  <tr className="text-left text-gray-600">
                     <th className="py-2 px-3">Ticker</th>
                     <th className="py-2 px-3">Tipo</th>
                     <th className="py-2 px-3 text-right">Qtde</th>
-                    <th className="py-2 px-3 text-right">Preço Médio</th>
-                    <th className="py-2 px-3 text-right">Preço Atual</th>
-                    <th className="py-2 px-3 text-right">Valor Atual</th>
+                    <th className="py-2 px-3 text-right">Preço médio</th>
+                    <th className="py-2 px-3 text-right">Preço atual</th>
+                    <th className="py-2 px-3 text-right">Valor atual</th>
                     <th className="py-2 px-3 text-right">DY</th>
                     <th className="py-2 px-3 text-right">P/VP</th>
-                    <th className="py-2 px-3 text-right">Rent.</th>
+                    <th className="py-2 px-3 text-right">Variação</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {ativos.map((a, i) => {
-                    const rent = a.preco_medio > 0 && a.preco_atual > 0
-                      ? ((a.preco_atual - a.preco_medio) / a.preco_medio * 100) : 0
+                  {ativos.map(a => {
+                    const variacao = a.valor_investido > 0
+                      ? ((a.valor_atual - a.valor_investido) / a.valor_investido) * 100 : 0
                     return (
-                      <tr key={i} className="border-b hover:bg-gray-50">
-                        <td className="py-2 px-3 font-medium">
-                          <button
-                            onClick={() => navigate(`/ativo/${a.ticker}`)}
-                            className="text-gray-800 hover:text-blue-600 hover:underline"
-                          >
-                            {a.ticker}
-                          </button>
-                        </td>
+                      <tr key={a.ticker}
+                        onClick={() => navigate(`/ativo/${a.ticker}`)}
+                        className="border-b hover:bg-gray-50 cursor-pointer">
+                        <td className="py-2 px-3 font-semibold text-blue-700">{a.ticker}</td>
                         <td className="py-2 px-3">
-                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                            a.tipo === 'FII' ? 'bg-purple-100 text-purple-700' :
-                            a.tipo === 'BDR' ? 'bg-orange-100 text-orange-700' :
-                            'bg-blue-100 text-blue-700'
-                          }`}>{a.tipo}</span>
+                          <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">{a.tipo}</span>
                         </td>
                         <td className="py-2 px-3 text-right">{a.quantidade}</td>
                         <td className="py-2 px-3 text-right">{formatBRL(a.preco_medio)}</td>
                         <td className="py-2 px-3 text-right">
-                          {a.tem_preco ? formatBRL(a.preco_atual) : <span className="text-yellow-600 text-xs">sem preço</span>}
+                          {a.tem_preco ? formatBRL(a.preco_atual) : <span className="text-gray-400 text-xs">sem preço</span>}
                         </td>
-                        <td className="py-2 px-3 text-right font-medium">
-                          {a.tem_preco ? formatBRL(a.valor_atual) : formatBRL(a.valor_investido)}
-                        </td>
-                        <td className="py-2 px-3 text-right text-gray-600">
+                        <td className="py-2 px-3 text-right font-medium">{formatBRL(a.valor_atual)}</td>
+                        <td className="py-2 px-3 text-right">
                           {a.dy > 0 ? `${a.dy.toFixed(2)}%` : '-'}
                         </td>
-                        <td className="py-2 px-3 text-right text-gray-600">
+                        <td className="py-2 px-3 text-right">
                           {a.pvp > 0 ? a.pvp.toFixed(2) : '-'}
                         </td>
-                        <td className={`py-2 px-3 text-right font-medium ${rent >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                          {a.tem_preco ? `${rent.toFixed(2)}%` : '-'}
+                        <td className={`py-2 px-3 text-right font-medium ${
+                          variacao >= 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {a.tem_preco ? `${variacao >= 0 ? '+' : ''}${variacao.toFixed(2)}%` : '-'}
                         </td>
                       </tr>
                     )
@@ -399,46 +350,8 @@ export default function Dashboard() {
                 </tbody>
               </table>
             </div>
-          </div>
-        ) : (
-          <div className="bg-white rounded-xl shadow-sm border p-12 text-center">
-            <PieChart className="mx-auto text-gray-300 mb-3" size={48} />
-            <h3 className="text-gray-700 font-semibold mb-2">
-              {filtroCorretora === 'todas' ? 'Sua carteira está vazia' : 'Nenhum ativo nesta corretora'}
-            </h3>
-            <p className="text-gray-500 text-sm mb-4">
-              {filtroCorretora === 'todas'
-                ? 'Importe suas operações para começar.'
-                : `Não há operações registradas para ${corretoraSelecionada?.nome || 'esta corretora'}.`}
-            </p>
-            <div className="flex gap-3 justify-center flex-wrap">
-              {filtroCorretora !== 'todas' && (
-                <button
-                  onClick={() => setFiltroCorretora('todas')}
-                  className="px-4 py-2 border text-gray-700 rounded-lg hover:bg-gray-50 text-sm"
-                >
-                  Ver todas as corretoras
-                </button>
-              )}
-              <button
-                onClick={() => navigate('/operacoes')}
-                className="px-4 py-2 bg-indigo-600 text-white text-sm rounded-lg hover:bg-indigo-500 flex items-center gap-2"
-              >
-                <TrendingUp size={16} /> Lançar Operação
-              </button>
-              <button
-                onClick={handleImportar}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-600 text-sm"
-              >
-                <Upload size={16} /> Importar Carteira
-              </button>
-            </div>
-          </div>
-        )}
-
-        <p className="text-center text-gray-400 text-xs mt-8">
-          RentaFlow v2.0 — Desenvolvido por Cecília Ribeiro
-        </p>
+          )}
+        </div>
       </main>
     </div>
   )
