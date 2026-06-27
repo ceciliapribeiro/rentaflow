@@ -1,457 +1,424 @@
-import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
+import Header from '../components/Header'
 import {
-  ArrowLeft, AlertTriangle, CheckCircle, Search, Loader,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+} from 'recharts'
+import {
+  DollarSign, Calendar, TrendingUp, RefreshCw, Search,
 } from 'lucide-react'
-
-const formatBRL = (v) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
-
-const formatData = (iso) => {
-  if (!iso) return '—'
-  const [a, m, d] = iso.split('-')
-  return `${d}/${m}/${a}`
-}
 
 export default function Dividendos() {
   const { user } = useAuth()
-  const navigate = useNavigate()
-
+  const [dividendos, setDividendos] = useState([])
   const [loading, setLoading] = useState(true)
-  const [buscando, setBuscando] = useState(false)
-  const [salvando, setSalvando] = useState(false)
-  const [erro, setErro] = useState(null)
+  const [atualizando, setAtualizando] = useState(false)
+  const [statusAtualizacao, setStatusAtualizacao] = useState(null)
 
-  const [tickers, setTickers] = useState([])
-  const [operacoes, setOperacoes] = useState([])
+  // Paginação
+  const [paginaAtual, setPaginaAtual] = useState(1)
+  const POR_PAGINA = 30
 
-  const hoje = new Date().toISOString().split('T')[0]
-  const umAnoAtras = (() => {
-    const d = new Date()
-    d.setDate(d.getDate() - 365)
-    return d.toISOString().split('T')[0]
-  })()
-  const [dataInicio, setDataInicio] = useState(umAnoAtras)
-  const [dataFim, setDataFim] = useState(hoje)
-
-  const [stats, setStats] = useState(null)
-  const [proventosNovos, setProventosNovos] = useState([])
-  const [proventosExistentes, setProventosExistentes] = useState([])
+  // Filtros
+  const [filtroAno, setFiltroAno] = useState('todos')
+  const [filtroTipo, setFiltroTipo] = useState('todos')
+  const [filtroTicker, setFiltroTicker] = useState('')
 
   useEffect(() => {
-    if (user) carregarDados()
+    if (user) carregarDividendos()
   }, [user])
 
-  const carregarDados = async () => {
+  const carregarDividendos = async () => {
     setLoading(true)
-    try {
-      const { data: carteira, error: errCart } = await supabase
-        .from('carteira')
-        .select('ticker, qtde_ideal')
-        .eq('user_id', user.id)
-        .gt('qtde_ideal', 0)
+    const { data, error } = await supabase
+      .from('dividendos')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('data_pagamento', { ascending: false })
 
-      if (errCart) throw errCart
-
-      const tickersList = (carteira || []).map(c => c.ticker)
-      if (tickersList.length === 0) {
-        setTickers([])
-        setOperacoes([])
-        setLoading(false)
-        return
-      }
-
-      const { data: ativos, error: errAt } = await supabase
-        .from('ativos')
-        .select('ticker, tipo')
-        .in('ticker', tickersList)
-
-      if (errAt) throw errAt
-
-      const tipoPorTicker = {}
-      ;(ativos || []).forEach(a => { tipoPorTicker[a.ticker] = a.tipo })
-
-      const tickersComTipo = tickersList.map(t => ({
-        ticker: t,
-        tipo: tipoPorTicker[t] || (t.endsWith('11') && t.length >= 5 ? 'FII' : 'Acao'),
-      }))
-
-      const { data: ops, error: errOps } = await supabase
-        .from('operacoes')
-        .select('data, ticker, quantidade, operacao')
-        .eq('user_id', user.id)
-        .order('data', { ascending: true })
-
-      if (errOps) throw errOps
-
-      setTickers(tickersComTipo)
-      setOperacoes(ops || [])
-    } catch (err) {
-      console.error(err)
-      setErro('Erro ao carregar dados: ' + err.message)
-    } finally {
-      setLoading(false)
+    if (error) {
+      console.error('Erro ao carregar dividendos:', error)
+      setDividendos([])
+    } else {
+      setDividendos(data || [])
     }
+    setLoading(false)
   }
 
-  const handleBuscar = async () => {
-    if (tickers.length === 0) {
-      setErro('Nenhum ativo na carteira para buscar dividendos.')
-      return
-    }
-    if (operacoes.length === 0) {
-      setErro('Nenhuma operação registrada — necessário para calcular custódia.')
+  const atualizarDividendos = async () => {
+    if (!confirm('Buscar novos proventos dos últimos 365 dias? Isso pode levar 2-5 minutos.')) {
       return
     }
 
-    setErro(null)
-    setBuscando(true)
-    setStats(null)
-    setProventosNovos([])
-    setProventosExistentes([])
+    setAtualizando(true)
+    setStatusAtualizacao({ etapa: 'iniciando', mensagem: 'Conectando à fonte de dados...' })
 
     try {
       const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-      const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
-
       const response = await fetch(`${SUPABASE_URL}/functions/v1/buscar-dividendos`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ANON_KEY}`,
-          'apikey': ANON_KEY,
-        },
-        body: JSON.stringify({
-          operacoes,
-          tickers_carteira: tickers,
-          data_inicio: dataInicio,
-          data_fim: dataFim,
-        }),
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: user.id }),
       })
 
-      if (!response.ok) {
-        const txt = await response.text()
-        throw new Error(`Edge Function ${response.status}: ${txt}`)
-      }
-
       const resultado = await response.json()
-      if (resultado.erro) throw new Error(resultado.erro)
+      if (!response.ok) throw new Error(resultado.erro || 'Erro desconhecido')
 
-      const encontrados = resultado.encontrados || []
-      setStats(resultado.stats)
-
-      if (encontrados.length > 0) {
-        const { data: existentes } = await supabase
-          .from('dividendos')
-          .select('ticker, data_pagamento, tipo_provento')
-          .eq('user_id', user.id)
-          .gte('data_pagamento', dataInicio)
-          .lte('data_pagamento', dataFim)
-
-        const chavesExistentes = new Set(
-          (existentes || []).map(d => `${d.ticker}|${d.data_pagamento}|${d.tipo_provento}`)
-        )
-
-        const novos = []
-        const dups = []
-        for (const p of encontrados) {
-          const tipoProv = p.tipo === 'JUROS' ? 'JUROS' : 'RENDIMENTO'
-          const chave = `${p.ticker}|${p.data_pagamento}|${tipoProv}`
-          if (chavesExistentes.has(chave)) {
-            dups.push({ ...p, tipo_provento: tipoProv, ja_existe: true })
-          } else {
-            novos.push({ ...p, tipo_provento: tipoProv, selecionado: true })
-          }
-        }
-
-        setProventosNovos(novos)
-        setProventosExistentes(dups)
-      }
+      setStatusAtualizacao({
+        etapa: 'sucesso',
+        mensagem: `${resultado.novos_dividendos} novo(s) | ${resultado.duplicados} já existentes | ${resultado.tickers_processados} ativos consultados`,
+        detalhes: resultado,
+      })
+      await carregarDividendos()
     } catch (err) {
-      console.error(err)
-      setErro('Erro ao buscar: ' + err.message)
+      console.error('Erro:', err)
+      setStatusAtualizacao({ etapa: 'erro', mensagem: err.message })
     } finally {
-      setBuscando(false)
+      setAtualizando(false)
     }
   }
 
-  const toggleSelecao = (idx) => {
-    setProventosNovos(prev =>
-      prev.map((p, i) => i === idx ? { ...p, selecionado: !p.selecionado } : p)
-    )
+  const formatBRL = (v) => new Intl.NumberFormat('pt-BR', {
+    style: 'currency', currency: 'BRL',
+  }).format(v)
+
+  const formatData = (d) => {
+    if (!d) return ''
+    const data = String(d).slice(0, 10)
+    const [y, m, day] = data.split('-')
+    return `${day}/${m}/${y}`
   }
 
-  const toggleTodos = () => {
-    const todosSel = proventosNovos.every(p => p.selecionado)
-    setProventosNovos(prev => prev.map(p => ({ ...p, selecionado: !todosSel })))
-  }
+  // Anos disponíveis para filtro
+  const anosDisponiveis = useMemo(() => {
+    const anos = new Set()
+    dividendos.forEach(d => {
+      if (d.ano) anos.add(String(d.ano))
+      else if (d.data_pagamento) anos.add(d.data_pagamento.slice(0, 4))
+    })
+    return Array.from(anos).sort().reverse()
+  }, [dividendos])
 
-  const handleSalvar = async () => {
-    const aSalvar = proventosNovos.filter(p => p.selecionado)
-    if (aSalvar.length === 0) {
-      setErro('Selecione ao menos um provento para salvar.')
-      return
-    }
+  // Dividendos filtrados
+  const dividendosFiltrados = useMemo(() => {
+    return dividendos.filter(d => {
+      const anoD = d.ano ? String(d.ano) : (d.data_pagamento?.slice(0, 4) || '')
+      if (filtroAno !== 'todos' && anoD !== filtroAno) return false
 
-    setSalvando(true)
-    setErro(null)
+      const tipoD = String(d.tipo_provento || '').toUpperCase()
+      if (filtroTipo === 'RENDIMENTO' && !tipoD.includes('REND')) return false
+      if (filtroTipo === 'JUROS' && !tipoD.includes('JURO') && !tipoD.includes('JCP')) return false
 
-    try {
-      const linhasBrutas = aSalvar.map(p => ({
-        user_id: user.id,
-        ano: parseInt(p.data_pagamento.split('-')[0], 10),
-        data_pagamento: p.data_pagamento,
-        data_ex: p.data_ex,
-        ticker: p.ticker,
-        valor: p.valor_total,
-        valor_unitario: p.valor_unitario,
-        quantidade: p.quantidade,
-        tipo_provento: p.tipo_provento,
-        fonte: p.fonte,
-      }))
+      if (filtroTicker && !String(d.ticker).toLowerCase().includes(filtroTicker.toLowerCase())) {
+        return false
+      }
+      return true
+    })
+  }, [dividendos, filtroAno, filtroTipo, filtroTicker])
 
-      const mapaUnico = new Map()
-      let duplicadosInternos = 0
+  // Totais
+  const totalGeral = useMemo(
+    () => dividendos.reduce((s, d) => s + Number(d.valor || 0), 0),
+    [dividendos]
+  )
+  const totalAnoVigente = useMemo(() => {
+    const anoAtual = new Date().getFullYear().toString()
+    return dividendos
+      .filter(d => {
+        const anoD = d.ano ? String(d.ano) : (d.data_pagamento?.slice(0, 4) || '')
+        return anoD === anoAtual
+      })
+      .reduce((s, d) => s + Number(d.valor || 0), 0)
+  }, [dividendos])
+  const totalFiltrado = useMemo(
+    () => dividendosFiltrados.reduce((s, d) => s + Number(d.valor || 0), 0),
+    [dividendosFiltrados]
+  )
 
-      for (const linha of linhasBrutas) {
-        const chave = `${linha.user_id}|${linha.ticker}|${linha.data_pagamento}|${linha.tipo_provento}`
-        const existente = mapaUnico.get(chave)
-        if (!existente || linha.valor > existente.valor) {
-          if (existente) duplicadosInternos++
-          mapaUnico.set(chave, linha)
-        } else {
-          duplicadosInternos++
+  // Média mensal do ano vigente (só meses com pelo menos 1 dividendo)
+  const mediaMensalAno = useMemo(() => {
+    const anoAtual = new Date().getFullYear().toString()
+    const meses = new Set()
+    let soma = 0
+    dividendos.forEach(d => {
+      const anoD = d.ano ? String(d.ano) : (d.data_pagamento?.slice(0, 4) || '')
+      if (anoD === anoAtual && d.data_pagamento) {
+        meses.add(d.data_pagamento.slice(0, 7))
+        soma += Number(d.valor || 0)
+      }
+    })
+    return meses.size > 0 ? soma / meses.size : 0
+  }, [dividendos])
+
+  // Agregação mensal para o gráfico (respeitando filtros)
+  const dadosGrafico = useMemo(() => {
+    const porMes = {}
+    dividendosFiltrados.forEach(d => {
+      if (!d.data_pagamento) return
+      const mes = d.data_pagamento.slice(0, 7) // YYYY-MM
+      porMes[mes] = (porMes[mes] || 0) + Number(d.valor || 0)
+    })
+    return Object.entries(porMes)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([mes, valor]) => {
+        const [y, m] = mes.split('-')
+        const nomesMeses = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
+                            'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
+        return {
+          mes: `${nomesMeses[parseInt(m, 10) - 1]}/${y.slice(2)}`,
+          valor: Number(valor.toFixed(2)),
         }
-      }
+      })
+  }, [dividendosFiltrados])
 
-      const linhas = Array.from(mapaUnico.values())
+  // Paginação
+  const totalPaginas = Math.ceil(dividendosFiltrados.length / POR_PAGINA)
+  const dividendosPagina = useMemo(() => {
+    const inicio = (paginaAtual - 1) * POR_PAGINA
+    return dividendosFiltrados.slice(inicio, inicio + POR_PAGINA)
+  }, [dividendosFiltrados, paginaAtual])
 
-      if (duplicadosInternos > 0) {
-        console.log(`[INFO] ${duplicadosInternos} duplicata(s) interna(s) consolidada(s).`)
-      }
-
-      const TAMANHO_LOTE = 50
-      let totalSalvo = 0
-
-      for (let i = 0; i < linhas.length; i += TAMANHO_LOTE) {
-        const lote = linhas.slice(i, i + TAMANHO_LOTE)
-        const { error } = await supabase
-          .from('dividendos')
-          .upsert(lote, {
-            onConflict: 'user_id,ticker,data_pagamento,tipo_provento',
-            ignoreDuplicates: false,
-          })
-        if (error) throw error
-        totalSalvo += lote.length
-      }
-
-      let msg = `✅ ${totalSalvo} provento(s) salvo(s) com sucesso!`
-      if (duplicadosInternos > 0) {
-        msg += `\n(${duplicadosInternos} duplicata(s) interna(s) consolidada(s))`
-      }
-      alert(msg)
-
-      setProventosExistentes(prev => [
-        ...prev,
-        ...aSalvar.map(p => ({ ...p, ja_existe: true }))
-      ])
-      setProventosNovos(prev => prev.filter(p => !p.selecionado))
-    } catch (err) {
-      console.error('[ERRO upsert]', err)
-      setErro('Erro ao salvar: ' + err.message)
-    } finally {
-      setSalvando(false)
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        Carregando dados...
-      </div>
-    )
-  }
+  // Reset paginação ao mudar filtros
+  useEffect(() => {
+    setPaginaAtual(1)
+  }, [filtroAno, filtroTipo, filtroTicker])
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-green-800 text-white">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4">
-          <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-green-700 rounded-lg">
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h1 className="text-xl font-bold">Buscar Dividendos</h1>
-            <p className="text-green-200 text-sm">
-              Consulta proventos via Fundamentus (B3) com cálculo de custódia D+2
+      <Header
+        titulo="Dividendos"
+        subtitulo="Proventos recebidos com base na sua custódia"
+      />
+
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {/* 3 cards de resumo */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          <div className="bg-white rounded-xl shadow-sm border p-6">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-gray-500 text-sm font-medium">Total Recebido</span>
+              <DollarSign className="text-green-600" size={20} />
+            </div>
+            <p className="text-2xl font-bold text-gray-800">{formatBRL(totalGeral)}</p>
+            <p className="text-xs text-gray-500 mt-1">{dividendos.length} provento(s) no total</p>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border p-6">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-gray-500 text-sm font-medium">Ano Vigente</span>
+              <Calendar className="text-blue-600" size={20} />
+            </div>
+            <p className="text-2xl font-bold text-gray-800">{formatBRL(totalAnoVigente)}</p>
+            <p className="text-xs text-gray-500 mt-1">{new Date().getFullYear()}</p>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border p-6">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-gray-500 text-sm font-medium">Média Mensal (ano)</span>
+              <TrendingUp className="text-purple-600" size={20} />
+            </div>
+            <p className="text-2xl font-bold text-gray-800">{formatBRL(mediaMensalAno)}</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Considerando meses com recebimento
             </p>
           </div>
         </div>
-      </header>
 
-      <main className="max-w-6xl mx-auto px-4 py-6">
-        <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
-          <h2 className="font-semibold text-gray-700 mb-4">Parâmetros da busca</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Data inicial</label>
-              <input
-                type="date" value={dataInicio}
-                onChange={(e) => setDataInicio(e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Data final</label>
-              <input
-                type="date" value={dataFim}
-                onChange={(e) => setDataFim(e.target.value)}
-                className="w-full px-3 py-2 border rounded-lg"
-              />
-            </div>
-            <div className="flex items-end">
-              <button
-                onClick={handleBuscar}
-                disabled={buscando || tickers.length === 0}
-                className="w-full px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center justify-center gap-2"
-              >
-                {buscando ? <Loader className="animate-spin" size={18} /> : <Search size={18} />}
-                {buscando ? 'Buscando...' : 'Buscar dividendos'}
-              </button>
-            </div>
-          </div>
-          <div className="mt-4 flex flex-wrap gap-4 text-sm text-gray-500">
-            <span><strong>{tickers.length}</strong> tickers na carteira</span>
-            <span>•</span>
-            <span><strong>{operacoes.length}</strong> operações registradas</span>
-          </div>
-        </div>
-
-        {erro && (
-          <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-start gap-3">
-            <AlertTriangle className="text-red-500 flex-shrink-0" size={20} />
-            <div className="text-red-700 text-sm whitespace-pre-wrap">{erro}</div>
-          </div>
-        )}
-
-        {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-            <CardStats label="Tickers consultados" valor={stats.tickers_consultados} cor="text-gray-800" />
-            <CardStats label="Proventos brutos" valor={stats.total_proventos_brutos} cor="text-blue-700" />
-            <CardStats label="Encontrados" valor={stats.encontrados} cor="text-green-700" />
-            <CardStats label="Sem custódia" valor={stats.ignorados_sem_custodia} cor="text-yellow-700" />
-          </div>
-        )}
-
-        {proventosNovos.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm border mb-6">
-            <div className="p-6 border-b flex items-center justify-between">
-              <h2 className="font-semibold text-gray-700">Proventos novos ({proventosNovos.length})</h2>
-              <div className="flex gap-2">
-                <button
-                  onClick={toggleTodos}
-                  className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50"
-                >
-                  {proventosNovos.every(p => p.selecionado) ? 'Desmarcar todos' : 'Marcar todos'}
-                </button>
-                <button
-                  onClick={handleSalvar}
-                  disabled={salvando}
-                  className="px-4 py-1.5 text-sm bg-green-700 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center gap-2"
-                >
-                  {salvando ? <Loader className="animate-spin" size={14} /> : <CheckCircle size={14} />}
-                  Salvar selecionados ({proventosNovos.filter(p => p.selecionado).length})
-                </button>
-              </div>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50">
-                  <tr className="border-b text-gray-500 text-left">
-                    <th className="py-2 px-3 w-8"></th>
-                    <th className="py-2 px-3">Ticker</th>
-                    <th className="py-2 px-3">Tipo</th>
-                    <th className="py-2 px-3">Data EX</th>
-                    <th className="py-2 px-3">Pagamento</th>
-                    <th className="py-2 px-3 text-right">Qtde</th>
-                    <th className="py-2 px-3 text-right">Valor unit.</th>
-                    <th className="py-2 px-3 text-right">Total</th>
-                    <th className="py-2 px-3">Fonte</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {proventosNovos.map((p, i) => (
-                    <tr key={i} className="border-b hover:bg-gray-50">
-                      <td className="py-2 px-3">
-                        <input
-                          type="checkbox" checked={p.selecionado}
-                          onChange={() => toggleSelecao(i)}
-                          className="w-4 h-4"
-                        />
-                      </td>
-                      <td className="py-2 px-3 font-medium">{p.ticker}</td>
-                      <td className="py-2 px-3">
-                        <span className={`text-xs px-2 py-0.5 rounded ${
-                          p.tipo_provento === 'JUROS' ? 'bg-orange-100 text-orange-700' : 'bg-emerald-100 text-emerald-700'
-                        }`}>{p.tipo_provento}</span>
-                      </td>
-                      <td className="py-2 px-3 text-gray-600">{formatData(p.data_ex)}</td>
-                      <td className="py-2 px-3 text-gray-600">{formatData(p.data_pagamento)}</td>
-                      <td className="py-2 px-3 text-right">{p.quantidade}</td>
-                      <td className="py-2 px-3 text-right">{formatBRL(p.valor_unitario)}</td>
-                      <td className="py-2 px-3 text-right font-bold text-green-700">{formatBRL(p.valor_total)}</td>
-                      <td className="py-2 px-3 text-xs text-gray-500">{p.fonte}</td>
-                    </tr>
-                  ))}
-                  <tr className="bg-gray-50 font-bold">
-                    <td colSpan="7" className="py-2 px-3 text-right">Total selecionado:</td>
-                    <td className="py-2 px-3 text-right text-green-700">
-                      {formatBRL(proventosNovos.filter(p => p.selecionado).reduce((s, p) => s + p.valor_total, 0))}
-                    </td>
-                    <td></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {proventosExistentes.length > 0 && (
-          <div className="bg-yellow-50 rounded-xl border border-yellow-200 p-4 mb-6">
-            <h3 className="font-semibold text-yellow-800 mb-2 text-sm">
-              {proventosExistentes.length} provento(s) já registrado(s) — ignorados
-            </h3>
-            <div className="text-xs text-yellow-700">
-              {proventosExistentes.slice(0, 5).map((p, i) => (
-                <div key={i}>
-                  • {p.ticker} • {formatData(p.data_pagamento)} • {p.tipo_provento} • {formatBRL(p.valor_total)}
-                </div>
+        {/* Filtros + botão Atualizar */}
+        <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap gap-3 items-center flex-1">
+            <select
+              value={filtroAno}
+              onChange={(e) => setFiltroAno(e.target.value)}
+              className="px-3 py-1.5 border rounded-lg text-sm bg-white"
+            >
+              <option value="todos">Todos os anos</option>
+              {anosDisponiveis.map(ano => (
+                <option key={ano} value={ano}>{ano}</option>
               ))}
-              {proventosExistentes.length > 5 && (
-                <div className="mt-1">... e mais {proventosExistentes.length - 5}</div>
-              )}
+            </select>
+
+            <select
+              value={filtroTipo}
+              onChange={(e) => setFiltroTipo(e.target.value)}
+              className="px-3 py-1.5 border rounded-lg text-sm bg-white"
+            >
+              <option value="todos">Todos os tipos</option>
+              <option value="RENDIMENTO">Rendimento</option>
+              <option value="JUROS">Juros / JCP</option>
+            </select>
+
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Buscar ticker..."
+                value={filtroTicker}
+                onChange={(e) => setFiltroTicker(e.target.value.toUpperCase())}
+                className="pl-9 pr-3 py-1.5 border rounded-lg text-sm bg-white"
+              />
             </div>
+
+            <span className="text-sm text-gray-500">
+              Total filtrado: <strong className="text-gray-800">{formatBRL(totalFiltrado)}</strong>
+              <span className="text-gray-400 ml-2">({dividendosFiltrados.length} registros)</span>
+            </span>
+          </div>
+
+          <button
+            onClick={atualizarDividendos}
+            disabled={atualizando}
+            className="flex items-center gap-2 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
+          >
+            <RefreshCw size={14} className={atualizando ? 'animate-spin' : ''} />
+            {atualizando ? 'Buscando...' : 'Atualizar dividendos'}
+          </button>
+        </div>
+
+        {/* Status da atualização */}
+        {statusAtualizacao && (
+          <div className={`px-4 py-3 mb-6 rounded-lg text-sm border ${
+            statusAtualizacao.etapa === 'erro' ? 'bg-red-50 text-red-700 border-red-200' :
+            statusAtualizacao.etapa === 'sucesso' ? 'bg-green-50 text-green-700 border-green-200' :
+            'bg-blue-50 text-blue-700 border-blue-200'
+          }`}>
+            {statusAtualizacao.mensagem}
           </div>
         )}
 
-        {stats && proventosNovos.length === 0 && proventosExistentes.length === 0 && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-            <p className="text-blue-700 text-sm">
-              Nenhum provento encontrado na janela. Verifique se você tinha cotas dos ativos antes da data EX.
-            </p>
+        {/* Gráfico de barras Recharts */}
+        {dadosGrafico.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">Dividendos por mês</h3>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={dadosGrafico} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                <XAxis dataKey="mes" tick={{ fontSize: 12, fill: '#6b7280' }} />
+                <YAxis
+                  tick={{ fontSize: 12, fill: '#6b7280' }}
+                  tickFormatter={(v) => v >= 1000 ? `R$ ${(v / 1000).toFixed(1)}k` : `R$ ${v.toFixed(0)}`}
+                />
+                <Tooltip
+                  formatter={(v) => formatBRL(v)}
+                  contentStyle={{
+                    borderRadius: '8px',
+                    border: '1px solid #e5e7eb',
+                    fontSize: '13px',
+                  }}
+                  labelStyle={{ color: '#374151', fontWeight: 600 }}
+                />
+                <Bar dataKey="valor" fill="#15803d" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         )}
+
+        {/* Tabela de dividendos com paginação */}
+        <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+          {loading ? (
+            <div className="p-8 text-center text-gray-500">Carregando...</div>
+          ) : dividendosFiltrados.length === 0 ? (
+            <div className="p-12 text-center">
+              <DollarSign className="mx-auto text-gray-300 mb-3" size={48} />
+              <p className="text-gray-700 font-semibold mb-2">Nenhum dividendo encontrado</p>
+              <p className="text-gray-500 text-sm mb-4">
+                {dividendos.length === 0
+                  ? 'Clique em "Atualizar dividendos" para buscar proventos.'
+                  : 'Tente alterar os filtros acima.'}
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b">
+                    <tr className="text-left text-gray-600">
+                      <th className="py-2 px-3">Data Pagamento</th>
+                      <th className="py-2 px-3">Data EX</th>
+                      <th className="py-2 px-3">Ticker</th>
+                      <th className="py-2 px-3">Tipo</th>
+                      <th className="py-2 px-3 text-right">Qtde</th>
+                      <th className="py-2 px-3 text-right">Valor Unit.</th>
+                      <th className="py-2 px-3 text-right">Valor Total</th>
+                      <th className="py-2 px-3">Fonte</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dividendosPagina.map(d => {
+                      const tipo = String(d.tipo_provento || '').toUpperCase()
+                      const ehJuros = tipo.includes('JURO') || tipo.includes('JCP')
+                      return (
+                        <tr key={d.id} className="border-b hover:bg-gray-50">
+                          <td className="py-2 px-3">{formatData(d.data_pagamento)}</td>
+                          <td className="py-2 px-3 text-gray-500">{formatData(d.data_ex)}</td>
+                          <td className="py-2 px-3 font-medium text-gray-800">{d.ticker}</td>
+                          <td className="py-2 px-3">
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                              ehJuros
+                                ? 'bg-amber-100 text-amber-700'
+                                : 'bg-green-100 text-green-700'
+                            }`}>
+                              {ehJuros ? 'JUROS' : 'RENDIMENTO'}
+                            </span>
+                          </td>
+                          <td className="py-2 px-3 text-right">
+                            {d.quantidade ? Number(d.quantidade).toFixed(0) : '-'}
+                          </td>
+                          <td className="py-2 px-3 text-right text-gray-600">
+                            {d.valor_unitario ? `R$ ${Number(d.valor_unitario).toFixed(4)}` : '-'}
+                          </td>
+                          <td className="py-2 px-3 text-right font-medium text-green-700">
+                            {formatBRL(d.valor)}
+                          </td>
+                          <td className="py-2 px-3 text-xs text-gray-500">
+                            {d.fonte || '-'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                  <tfoot className="bg-gray-50 border-t">
+                    <tr>
+                      <td colSpan="6" className="py-3 px-3 font-semibold text-gray-700 text-right">
+                        Total (página atual):
+                      </td>
+                      <td className="py-3 px-3 text-right font-bold text-green-700 text-base">
+                        {formatBRL(dividendosPagina.reduce((s, d) => s + Number(d.valor || 0), 0))}
+                      </td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+
+              {/* Paginação */}
+              {totalPaginas > 1 && (
+                <div className="border-t px-4 py-3 flex items-center justify-between text-sm">
+                  <span className="text-gray-500">
+                    Página {paginaAtual} de {totalPaginas} ({dividendosFiltrados.length} registros)
+                  </span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setPaginaAtual(p => Math.max(1, p - 1))}
+                      disabled={paginaAtual === 1}
+                      className="px-3 py-1 border rounded-lg disabled:opacity-50 hover:bg-gray-50"
+                    >
+                      Anterior
+                    </button>
+                    <button
+                      onClick={() => setPaginaAtual(p => Math.min(totalPaginas, p + 1))}
+                      disabled={paginaAtual === totalPaginas}
+                      className="px-3 py-1 border rounded-lg disabled:opacity-50 hover:bg-gray-50"
+                    >
+                      Próxima
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </main>
-    </div>
-  )
-}
-
-function CardStats({ label, valor, cor }) {
-  return (
-    <div className="bg-white border rounded-lg p-4">
-      <p className="text-xs text-gray-500 mb-1">{label}</p>
-      <p className={`text-xl font-bold ${cor}`}>{valor}</p>
     </div>
   )
 }

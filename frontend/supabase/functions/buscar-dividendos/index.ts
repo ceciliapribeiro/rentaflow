@@ -1,309 +1,131 @@
-// supabase/functions/buscar-dividendos/index.ts
-// Edge Function: busca proventos no Fundamentus (B3) e Status Invest fallback
-// Portado de caca_dividendos.py do sistema desktop RentaFlow
+// Edge Function: buscar-dividendos (v1)
+// Porta do caca_dividendos.py:
+// - Custódia D+2 úteis a partir de OPERAÇÕES
+// - Fundamentus primária + Status Invest fallback
+// - Dedup por chave TICKER_DATA_PAGAMENTO_TIPO
+// - Janela fixa 365 dias
 
-const CORS = {
+import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
+
+const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Max-Age': '86400',
 }
 
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'pt-BR,pt;q=0.9',
-  'Referer': 'https://www.fundamentus.com.br/',
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+
+const JANELA_DIAS = 365
+
+function jsonResponse(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  })
 }
 
-// ══════════════════════════════════════════════════════════════════
-// FUNÇÕES DE DATA
-// ══════════════════════════════════════════════════════════════════
-
-function parseDataBR(s: string): Date | null {
-  // "10/02/2026" → Date
-  const m = String(s).trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/)
-  if (!m) return null
-  const d = parseInt(m[1], 10)
-  const mes = parseInt(m[2], 10)
-  const a = parseInt(m[3], 10)
-  if (a < 2000 || a > 2050) return null
-  return new Date(Date.UTC(a, mes - 1, d))
+// ───────────────────────────────────────────────────────────
+// TIPOS
+// ───────────────────────────────────────────────────────────
+interface Provento {
+  data_ex: Date
+  data_pagamento: Date
+  valor_unitario: number
+  tipo: 'RENDIMENTO' | 'JUROS'
 }
-
-function adicionarDiasUteis(data: Date, dias: number): Date {
-  // Avança N dias úteis (pula sáb/dom)
-  const d = new Date(data.getTime())
-  let restantes = dias
-  while (restantes > 0) {
-    d.setUTCDate(d.getUTCDate() + 1)
-    const dow = d.getUTCDay()
-    if (dow !== 0 && dow !== 6) restantes--
-  }
-  return d
-}
-
-function dataParaIso(d: Date): string {
-  return d.toISOString().split('T')[0]
-}
-
-// ══════════════════════════════════════════════════════════════════
-// PARSER DE NÚMEROS BRASILEIROS
-// ══════════════════════════════════════════════════════════════════
-
-function parseValorBR(s: string): number {
-  // "0,123" ou "1.234,56" → 0.123 / 1234.56
-  const limpo = String(s)
-    .replace(/[^\d,.\-]/g, '')
-    .trim()
-  if (!limpo) return 0
-  const temPonto = limpo.includes('.')
-  const temVirgula = limpo.includes(',')
-  let normalizado = limpo
-  if (temPonto && temVirgula) {
-    normalizado = limpo.replace(/\./g, '').replace(',', '.')
-  } else if (temVirgula) {
-    normalizado = limpo.replace(',', '.')
-  }
-  const v = parseFloat(normalizado)
-  return isNaN(v) ? 0 : v
-}
-
-// ══════════════════════════════════════════════════════════════════
-// NORMALIZAÇÃO DE TIPO DE PROVENTO
-// ══════════════════════════════════════════════════════════════════
-
-function normalizarTipoProvento(raw: string): 'JUROS' | 'RENDIMENTO' {
-  const t = String(raw || '').toUpperCase()
-  if (t.includes('JCP') || t.includes('JUROS') || t.includes('JRS') || t.includes('CAP PROPRIO')) {
-    return 'JUROS'
-  }
-  return 'RENDIMENTO'
-}
-
-// ══════════════════════════════════════════════════════════════════
-// FUNDAMENTUS — Fonte primária
-// ══════════════════════════════════════════════════════════════════
-
-async function buscarFundamentus(ticker: string, ehFii: boolean): Promise<any[]> {
-  const tickerUp = ticker.toUpperCase()
-  const url = ehFii
-    ? `https://www.fundamentus.com.br/fii_proventos.php?papel=${tickerUp}`
-    : `https://www.fundamentus.com.br/proventos.php?papel=${tickerUp}&tipo=2`
-
-  let html = ''
-  for (let tentativa = 0; tentativa < 3; tentativa++) {
-    try {
-      const res = await fetch(url, { headers: HEADERS })
-      if (res.status === 200) {
-        html = await res.text()
-        break
-      }
-      if (res.status === 429 || res.status === 503) {
-        const espera = 15000 * (tentativa + 1)
-        console.log(`[FUND] ${ticker} rate limit (${res.status}) - aguardando ${espera}ms`)
-        await new Promise(r => setTimeout(r, espera))
-      }
-    } catch (e) {
-      if (tentativa < 2) await new Promise(r => setTimeout(r, 3000 * (tentativa + 1)))
-    }
-  }
-
-  if (!html) return []
-
-  // Extrai conteúdo das células <td>
-  const re = /<td[^>]*>([^<]+)<\/td>/g
-  const campos: string[] = []
-  let m
-  while ((m = re.exec(html)) !== null) {
-    campos.push(m[1].trim())
-  }
-
-  if (campos.length === 0) return []
-
-  const proventos = []
-  const passo = ehFii ? 4 : 5  // FII: 4 colunas | Ação: 5 colunas
-
-  for (let i = 0; i + (passo - 1) < campos.length; i += passo) {
-    try {
-      let dataExStr, tipoRaw, dataPagStr, valorStr
-
-      if (ehFii) {
-        // FII: data_ex | tipo | data_pagamento | valor
-        dataExStr = campos[i]
-        tipoRaw = campos[i + 1]
-        dataPagStr = campos[i + 2].split(/\s+/)[0]
-        valorStr = campos[i + 3]
-      } else {
-        // Ação: data_ex | valor | tipo | data_pagamento | _
-        dataExStr = campos[i]
-        valorStr = campos[i + 1]
-        tipoRaw = campos[i + 2]
-        dataPagStr = campos[i + 3].split(/\s+/)[0]
-      }
-
-      // Ignora linhas sem data de pagamento
-      if (!dataPagStr || dataPagStr === '-') continue
-
-      const dataEx = parseDataBR(dataExStr)
-      const dataPag = parseDataBR(dataPagStr)
-      if (!dataEx || !dataPag) continue
-
-      const valor = parseValorBR(valorStr)
-      if (valor <= 0) continue
-
-      proventos.push({
-        data_ex: dataParaIso(dataEx),
-        data_pagamento: dataParaIso(dataPag),
-        valor,
-        tipo: normalizarTipoProvento(tipoRaw),
-      })
-    } catch (e) {
-      continue
-    }
-  }
-
-  return proventos
-}
-
-// ══════════════════════════════════════════════════════════════════
-// STATUS INVEST — Fallback
-// ══════════════════════════════════════════════════════════════════
-
-async function buscarStatusInvest(ticker: string, ehFii: boolean): Promise<any[]> {
-  const t = ticker.toLowerCase()
-  const url = ehFii
-    ? `https://statusinvest.com.br/fii/companytickerprovents?ticker=${t}&chartProventsType=2`
-    : `https://statusinvest.com.br/acao/companytickerprovents?ticker=${t}&chartProventsType=1`
-
-  let json: any = null
-  for (let tentativa = 0; tentativa < 3; tentativa++) {
-    try {
-      const res = await fetch(url, { headers: { 'User-Agent': HEADERS['User-Agent'] } })
-      if (res.status === 200) {
-        json = await res.json()
-        break
-      }
-      if (res.status === 429 || res.status === 503) {
-        await new Promise(r => setTimeout(r, 15000 * (tentativa + 1)))
-      }
-    } catch (e) {
-      if (tentativa < 2) await new Promise(r => setTimeout(r, 3000 * (tentativa + 1)))
-    }
-  }
-
-  if (!json) return []
-
-  const modelos = json.assetEarningsModels || []
-  const proventos = []
-
-  for (const item of modelos) {
-    if (!item.pd || item.pd === '-') continue
-    if (!item.ed || item.ed === '-') continue
-
-    try {
-      const dataEx = parseDataBR(item.ed)
-      const dataPag = parseDataBR(item.pd)
-      if (!dataEx || !dataPag) continue
-
-      const valor = parseFloat(item.v)
-      if (isNaN(valor) || valor <= 0) continue
-
-      proventos.push({
-        data_ex: dataParaIso(dataEx),
-        data_pagamento: dataParaIso(dataPag),
-        valor,
-        tipo: normalizarTipoProvento(item.et || 'Rendimento'),
-      })
-    } catch (e) {
-      continue
-    }
-  }
-
-  return proventos
-}
-
-// ══════════════════════════════════════════════════════════════════
-// BUSCA COMBINADA (Fundamentus → Status Invest fallback)
-// ══════════════════════════════════════════════════════════════════
-
-async function buscarProventos(ticker: string, ehFii: boolean): Promise<any[]> {
-  // 1. Tenta Fundamentus
-  let proventos = await buscarFundamentus(ticker, ehFii)
-  let fonte = 'fundamentus'
-
-  // 2. Fallback: Status Invest
-  if (proventos.length === 0) {
-    console.log(`[${ticker}] Fundamentus sem dados, tentando Status Invest...`)
-    proventos = await buscarStatusInvest(ticker, ehFii)
-    fonte = 'status_invest'
-  }
-
-  return proventos.map(p => ({ ...p, fonte }))
-}
-
-// ══════════════════════════════════════════════════════════════════
-// CUSTÓDIA D+2 — Reconstrói posições por ticker
-// ══════════════════════════════════════════════════════════════════
 
 interface Operacao {
-  data: string         // ISO yyyy-mm-dd (data do pregão)
   ticker: string
+  data: string         // YYYY-MM-DD do pregão
   quantidade: number
-  operacao: string     // COMPRA ou VENDA
+  operacao: 'COMPRA' | 'VENDA'
+  tipo_ativo?: string
 }
 
 interface Snapshot {
-  data_liquidacao: string  // ISO
+  data_liquidacao: Date  // após D+2 úteis
   qtde_acumulada: number
 }
 
-function reconstruirCustodia(operacoes: Operacao[]): Map<string, Snapshot[]> {
-  // Agrupa por ticker e calcula snapshots cumulativos com D+2
-  const porTicker: Map<string, { data: Date, delta: number }[]> = new Map()
+interface ResultadoTicker {
+  ticker: string
+  novos: number
+  ignorados_sem_custodia: number
+  duplicados: number
+  fonte: 'Fundamentus' | 'StatusInvest' | 'nenhuma'
+  erro?: string
+}
+
+// ───────────────────────────────────────────────────────────
+// 1) D+2 dias úteis (idêntico ao desktop _adicionar_dias_uteis)
+// ───────────────────────────────────────────────────────────
+function adicionarDiasUteis(data: Date, dias: number): Date {
+  let atual = new Date(data)
+  atual.setHours(0, 0, 0, 0)
+  let adicionados = 0
+  while (adicionados < dias) {
+    atual.setDate(atual.getDate() + 1)
+    const dow = atual.getDay()  // 0=dom, 6=sáb
+    if (dow !== 0 && dow !== 6) {
+      adicionados += 1
+    }
+  }
+  return atual
+}
+
+// Constrói snapshots de custódia por ticker usando data de LIQUIDAÇÃO (D+2 úteis)
+function construirHistoricoPosicoes(operacoes: Operacao[]): Map<string, Snapshot[]> {
+  const opsPorTicker = new Map<string, { data_liq: Date; delta: number }[]>()
 
   for (const op of operacoes) {
-    const dataPregao = new Date(op.data + 'T00:00:00Z')
-    if (isNaN(dataPregao.getTime())) continue
-
-    const dataLiquidacao = adicionarDiasUteis(dataPregao, 2)
-    const qtde = Math.abs(op.quantidade)
+    const ticker = op.ticker.toUpperCase().trim()
+    const qtde = Number(op.quantidade) || 0
+    const tipo = (op.operacao || '').toUpperCase()
     if (qtde <= 0) continue
 
-    const tipo = String(op.operacao || '').toUpperCase()
-    let delta = 0
-    if (tipo.includes('COMPRA')) delta = +qtde
-    else if (tipo.includes('VENDA')) delta = -qtde
-    else continue
+    // Parse data YYYY-MM-DD como local
+    const [y, m, d] = op.data.split('-').map(Number)
+    if (!y || !m || !d) continue
+    const dataPregao = new Date(y, m - 1, d)
+    const dataLiq = adicionarDiasUteis(dataPregao, 2)
 
-    if (!porTicker.has(op.ticker)) porTicker.set(op.ticker, [])
-    porTicker.get(op.ticker)!.push({ data: dataLiquidacao, delta })
+    if (!opsPorTicker.has(ticker)) opsPorTicker.set(ticker, [])
+    const lista = opsPorTicker.get(ticker)!
+
+    if (tipo === 'COMPRA') {
+      lista.push({ data_liq: dataLiq, delta: +qtde })
+    } else if (tipo === 'VENDA') {
+      lista.push({ data_liq: dataLiq, delta: -qtde })
+    }
   }
 
-  // Constrói snapshots ordenados
-  const resultado: Map<string, Snapshot[]> = new Map()
-  for (const [ticker, eventos] of porTicker.entries()) {
-    eventos.sort((a, b) => a.data.getTime() - b.data.getTime())
+  const historico = new Map<string, Snapshot[]>()
+  for (const [ticker, ops] of opsPorTicker.entries()) {
+    ops.sort((a, b) => a.data_liq.getTime() - b.data_liq.getTime())
     let acumulado = 0
-    const snaps: Snapshot[] = []
-    for (const e of eventos) {
-      acumulado += e.delta
-      snaps.push({
-        data_liquidacao: dataParaIso(e.data),
+    const snapshots: Snapshot[] = []
+    for (const op of ops) {
+      acumulado += op.delta
+      snapshots.push({
+        data_liquidacao: op.data_liq,
         qtde_acumulada: Math.max(acumulado, 0),
       })
     }
-    resultado.set(ticker, snaps)
+    historico.set(ticker, snapshots)
   }
 
-  return resultado
+  return historico
 }
 
-function qtdeNaData(snapshots: Snapshot[], dataIso: string): number {
-  // Última snapshot com data <= dataIso
+// Quantas cotas o usuário tinha em custódia em uma data EX específica
+function qtdeEmCustodia(snapshots: Snapshot[], dataRef: Date): number {
   let qtde = 0
-  for (const s of snapshots) {
-    if (s.data_liquidacao <= dataIso) {
-      qtde = s.qtde_acumulada
+  const ref = dataRef.getTime()
+  for (const snap of snapshots) {
+    if (snap.data_liquidacao.getTime() <= ref) {
+      qtde = snap.qtde_acumulada
     } else {
       break
     }
@@ -311,109 +133,462 @@ function qtdeNaData(snapshots: Snapshot[], dataIso: string): number {
   return qtde
 }
 
-// ══════════════════════════════════════════════════════════════════
-// HANDLER PRINCIPAL
-// ══════════════════════════════════════════════════════════════════
+// Normaliza tipo de provento para RENDIMENTO ou JUROS
+function tipoParaDesc(tipoRaw: string): 'RENDIMENTO' | 'JUROS' {
+  const t = (tipoRaw || '').toUpperCase()
+  if (t.includes('JRS') || t.includes('JUROS') || t.includes('JCP') || t.includes('CAP PROPRIO')) {
+    return 'JUROS'
+  }
+  return 'RENDIMENTO'
+}
 
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: CORS })
+// Parse data BR DD/MM/YYYY → Date
+function parseDataBR(s: string): Date | null {
+  if (!s || s === '-') return null
+  const parts = s.trim().split('/')
+  if (parts.length !== 3) return null
+  const [d, m, y] = parts.map(Number)
+  if (!d || !m || !y) return null
+  return new Date(y, m - 1, d)
+}
+
+// Parse valor BR "12,34" → 12.34
+function parseValorBR(s: string): number {
+  if (!s) return 0
+  const limpo = s.trim().replace(/\./g, '').replace(',', '.')
+  const n = parseFloat(limpo)
+  return isFinite(n) ? n : 0
+}
+
+// ───────────────────────────────────────────────────────────
+// 4) FUNDAMENTUS — fonte primária (mesma lógica do desktop)
+// ───────────────────────────────────────────────────────────
+async function buscarFundamentus(
+  ticker: string,
+  ehFII: boolean,
+): Promise<Provento[]> {
+  const headers = {
+    'User-Agent': UA,
+    'Referer': 'https://www.fundamentus.com.br/',
+    'Accept': 'text/html,application/xhtml+xml',
+    'Accept-Language': 'pt-BR,pt;q=0.9',
   }
 
-  try {
-    const body = await req.json()
-    const operacoes: Operacao[] = body.operacoes || []
-    const tickers: { ticker: string, tipo: string }[] = body.tickers_carteira || []
-    const dataInicio = body.data_inicio || '2024-01-01'
-    const dataFim = body.data_fim || dataParaIso(new Date())
+  const url = ehFII
+    ? `https://www.fundamentus.com.br/fii_proventos.php?papel=${ticker.toUpperCase()}`
+    : `https://www.fundamentus.com.br/proventos.php?papel=${ticker.toUpperCase()}&tipo=2`
 
-    if (operacoes.length === 0 || tickers.length === 0) {
-      return new Response(
-        JSON.stringify({ erro: 'operacoes e tickers_carteira são obrigatórios' }),
-        { status: 400, headers: { ...CORS, 'Content-Type': 'application/json' } }
-      )
+  let html = ''
+  for (let tentativa = 0; tentativa < 3; tentativa++) {
+    try {
+      const r = await fetch(url, { headers })
+      if (r.ok) {
+        html = await r.text()
+        break
+      }
+      if (tentativa < 2) {
+        await new Promise(rs => setTimeout(rs, 3000 * (tentativa + 1)))
+      }
+    } catch {
+      if (tentativa < 2) {
+        await new Promise(rs => setTimeout(rs, 3000 * (tentativa + 1)))
+      }
+    }
+  }
+
+  if (!html) return []
+
+  // Extrai todos os <td>...</td>
+  const tdMatches = html.matchAll(/<td[^>]*>([^<]+)<\/td>/g)
+  const campos: string[] = []
+  for (const m of tdMatches) {
+    campos.push(m[1].trim())
+  }
+
+  if (campos.length === 0) return []
+
+  const proventos: Provento[] = []
+  const passo = ehFII ? 4 : 5
+
+  for (let i = 0; i <= campos.length - passo; i += passo) {
+    try {
+      let dataExStr: string
+      let dataPagStr: string
+      let valorStr: string
+      let tipoRaw: string
+
+      if (ehFII) {
+        // FII: data_ex | tipo | data_pagamento | valor
+        dataExStr  = campos[i].trim()
+        tipoRaw    = campos[i + 1].trim()
+        dataPagStr = campos[i + 2].trim().split(/\s+/)[0]
+        valorStr   = campos[i + 3].trim()
+      } else {
+        // Ação: data_ex | valor | tipo | data_pagamento | _
+        dataExStr  = campos[i].trim()
+        valorStr   = campos[i + 1].trim()
+        tipoRaw    = campos[i + 2].trim()
+        dataPagStr = campos[i + 3].trim().split(/\s+/)[0]
+      }
+
+      if (!dataPagStr || dataPagStr === '-') continue
+
+      const dataEx = parseDataBR(dataExStr)
+      const dataPag = parseDataBR(dataPagStr)
+      const valor = parseValorBR(valorStr)
+
+      if (!dataEx || !dataPag || valor <= 0) continue
+
+      proventos.push({
+        data_ex: dataEx,
+        data_pagamento: dataPag,
+        valor_unitario: valor,
+        tipo: tipoParaDesc(tipoRaw),
+      })
+    } catch {
+      continue
+    }
+  }
+
+  return proventos
+}
+
+// ───────────────────────────────────────────────────────────
+// 5) STATUS INVEST — fallback (JSON API)
+// ───────────────────────────────────────────────────────────
+async function buscarStatusInvestProventos(
+  ticker: string,
+  ehFII: boolean,
+): Promise<Provento[]> {
+  const headers = { 'User-Agent': UA }
+
+  const buscarUrl = async (url: string): Promise<any[]> => {
+    for (let tentativa = 0; tentativa < 3; tentativa++) {
+      try {
+        const r = await fetch(url, { headers })
+        if (r.status === 429 || r.status === 503) {
+          await new Promise(rs => setTimeout(rs, 15000 * (tentativa + 1)))
+          continue
+        }
+        if (r.ok) {
+          const j = await r.json().catch(() => ({}))
+          return j?.assetEarningsModels || []
+        }
+      } catch {
+        if (tentativa < 2) {
+          await new Promise(rs => setTimeout(rs, 3000 * (tentativa + 1)))
+        }
+      }
+    }
+    return []
+  }
+
+  const url = ehFII
+    ? `https://statusinvest.com.br/fii/companytickerprovents?ticker=${ticker.toLowerCase()}&chartProventsType=2`
+    : `https://statusinvest.com.br/acao/companytickerprovents?ticker=${ticker.toLowerCase()}&chartProventsType=1`
+
+  let modelos = await buscarUrl(url)
+
+  // Para ações, tenta também chartProventsType=2 se vier vazio
+  if (modelos.length === 0 && !ehFII) {
+    modelos = await buscarUrl(url.replace('chartProventsType=1', 'chartProventsType=2'))
+  }
+
+  const proventos: Provento[] = []
+  for (const item of modelos) {
+    if (!item?.pd || item.pd === '-') continue
+    if (!item?.ed || item.ed === '-') continue
+    try {
+      const dataEx = parseDataBR(item.ed)
+      const dataPag = parseDataBR(item.pd)
+      const valor = Number(item.v) || 0
+      if (!dataEx || !dataPag || valor <= 0) continue
+      proventos.push({
+        data_ex: dataEx,
+        data_pagamento: dataPag,
+        valor_unitario: valor,
+        tipo: tipoParaDesc(item.et || 'Rendimento'),
+      })
+    } catch {
+      continue
+    }
+  }
+
+  return proventos
+}
+
+// ───────────────────────────────────────────────────────────
+// 6) COMBINADOR — Fundamentus → Status Invest fallback
+// ───────────────────────────────────────────────────────────
+async function buscarProventos(
+  ticker: string,
+  ehFII: boolean,
+): Promise<{ proventos: Provento[]; fonte: 'Fundamentus' | 'StatusInvest' | 'nenhuma' }> {
+  // Tenta Fundamentus primeiro
+  const fundamentus = await buscarFundamentus(ticker, ehFII)
+  if (fundamentus.length > 0) {
+    return { proventos: fundamentus, fonte: 'Fundamentus' }
+  }
+
+  // Fallback para Status Invest
+  const statusInvest = await buscarStatusInvestProventos(ticker, ehFII)
+  if (statusInvest.length > 0) {
+    return { proventos: statusInvest, fonte: 'StatusInvest' }
+  }
+
+  return { proventos: [], fonte: 'nenhuma' }
+}
+
+// ───────────────────────────────────────────────────────────
+// 7) Detecta se é FII (consulta tabela ativos primeiro, fallback heurístico)
+// ───────────────────────────────────────────────────────────
+async function detectarFII(
+  supabase: any,
+  ticker: string,
+): Promise<boolean> {
+  // Heurística rápida primeiro
+  const heuristica = ticker.length === 6 && ticker.endsWith('11')
+
+  try {
+    const { data } = await supabase
+      .from('ativos').select('tipo')
+      .eq('ticker', ticker).maybeSingle()
+    if (data?.tipo) {
+      const t = String(data.tipo).toUpperCase()
+      return t === 'FII' || t === 'FIAGRO'
+    }
+  } catch {
+    /* segue com heurística */
+  }
+  return heuristica
+}
+
+// ───────────────────────────────────────────────────────────
+// 8) Processa um ticker: busca + filtra por custódia + dedup
+// ───────────────────────────────────────────────────────────
+interface RegistroExistente {
+  data_pagamento: string  // YYYY-MM-DD
+  tipo_provento: string   // RENDIMENTO ou JUROS
+}
+
+async function processarTicker(
+  supabase: any,
+  userId: string,
+  ticker: string,
+  snapshots: Snapshot[],
+  existentesPorTicker: Map<string, Set<string>>,
+  inicioBusca: Date,
+  hojeLimite: Date,
+): Promise<ResultadoTicker> {
+  const resultado: ResultadoTicker = {
+    ticker,
+    novos: 0,
+    ignorados_sem_custodia: 0,
+    duplicados: 0,
+    fonte: 'nenhuma',
+  }
+
+  const ehFii = await detectarFII(supabase, ticker)
+
+  try {
+    const { proventos, fonte } = await buscarProventos(ticker, ehFii)
+    resultado.fonte = fonte
+
+    if (proventos.length === 0) {
+      resultado.erro = 'Sem proventos retornados pelas fontes'
+      return resultado
     }
 
-    console.log(`[INIT] Operações: ${operacoes.length} | Tickers: ${tickers.length}`)
+    const chavesExistentes = existentesPorTicker.get(ticker) || new Set<string>()
+    const novosRegistros: any[] = []
 
-    // 1. Reconstrói custódia D+2
-    const snapshotsPorTicker = reconstruirCustodia(operacoes)
-    console.log(`[CUSTODIA] ${snapshotsPorTicker.size} tickers com histórico`)
-
-    // 2. Para cada ticker da carteira, busca proventos
-    const encontrados = []
-    let ignoradosSemCustodia = 0
-    let totalProventosBrutos = 0
-
-    for (const t of tickers) {
-      const ticker = t.ticker.toUpperCase()
-      const ehFii = String(t.tipo || '').toUpperCase().includes('FII')
-
-      const snapshots = snapshotsPorTicker.get(ticker) || []
-      if (snapshots.length === 0) {
-        console.log(`[SKIP] ${ticker}: sem histórico de operações`)
+    for (const prov of proventos) {
+      // Filtra pela janela (365 dias)
+      if (prov.data_pagamento < inicioBusca || prov.data_pagamento > hojeLimite) {
         continue
       }
 
-      try {
-        const proventos = await buscarProventos(ticker, ehFii)
-        totalProventosBrutos += proventos.length
-        console.log(`[${ticker}] ${proventos.length} proventos brutos`)
+      // Calcula qtde em custódia na data EX (D+2 já aplicado nos snapshots)
+      const qtde = qtdeEmCustodia(snapshots, prov.data_ex)
+      if (qtde <= 0) {
+        resultado.ignorados_sem_custodia += 1
+        continue
+      }
 
-        for (const p of proventos) {
-          // Filtra por janela de busca
-          if (p.data_pagamento < dataInicio || p.data_pagamento > dataFim) continue
+      // Formata data como YYYY-MM-DD
+      const yyyy = prov.data_pagamento.getFullYear()
+      const mm = String(prov.data_pagamento.getMonth() + 1).padStart(2, '0')
+      const dd = String(prov.data_pagamento.getDate()).padStart(2, '0')
+      const dataPagISO = `${yyyy}-${mm}-${dd}`
 
-          // Verifica custódia na data EX
-          const qtde = qtdeNaData(snapshots, p.data_ex)
-          if (qtde <= 0) {
-            ignoradosSemCustodia++
-            continue
-          }
+      // Dedup por chave TICKER_DATA_TIPO
+      const chave = `${dataPagISO}_${prov.tipo}`
+      if (chavesExistentes.has(chave)) {
+        resultado.duplicados += 1
+        continue
+      }
 
-          // Calcula valor total recebido
-          const valorTotal = Math.round(qtde * p.valor * 100) / 100
+      const valorTotal = Math.round(qtde * prov.valor_unitario * 100) / 100
 
-          encontrados.push({
-            ticker,
-            data_pagamento: p.data_pagamento,
-            data_ex: p.data_ex,
-            valor_unitario: p.valor,
-            quantidade: qtde,
-            valor_total: valorTotal,
-            tipo: p.tipo,
-            fonte: p.fonte,
-          })
-        }
+      novosRegistros.push({
+        user_id: userId,
+        ticker,
+        ano: yyyy,
+        data_pagamento: dataPagISO,
+        data_ex: `${prov.data_ex.getFullYear()}-${String(prov.data_ex.getMonth() + 1).padStart(2, '0')}-${String(prov.data_ex.getDate()).padStart(2, '0')}`,
+        valor: valorTotal,
+        valor_unitario: prov.valor_unitario,
+        quantidade: qtde,
+        tipo_provento: prov.tipo,
+        fonte,
+      })
 
-        // Pequeno delay entre tickers para não saturar
-        await new Promise(r => setTimeout(r, 500))
+      chavesExistentes.add(chave)
+    }
 
-      } catch (e) {
-        console.error(`[ERRO] ${ticker}:`, e)
+    if (novosRegistros.length > 0) {
+      const { error } = await supabase.from('dividendos').insert(novosRegistros)
+      if (error) {
+        resultado.erro = `Erro ao gravar: ${error.message}`
+      } else {
+        resultado.novos = novosRegistros.length
       }
     }
 
-    console.log(`[FIM] Encontrados: ${encontrados.length} | Sem custódia: ${ignoradosSemCustodia}`)
-
-    return new Response(
-      JSON.stringify({
-        encontrados,
-        stats: {
-          tickers_consultados: tickers.length,
-          total_proventos_brutos: totalProventosBrutos,
-          encontrados: encontrados.length,
-          ignorados_sem_custodia: ignoradosSemCustodia,
-        }
-      }),
-      { headers: { ...CORS, 'Content-Type': 'application/json' } }
-    )
-
+    return resultado
   } catch (e) {
-    console.error('[FATAL]', e)
-    return new Response(
-      JSON.stringify({ erro: e.message }),
-      { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } }
+    resultado.erro = String(e).slice(0, 150)
+    return resultado
+  }
+}
+
+// ───────────────────────────────────────────────────────────
+// 9) HANDLER HTTP
+// ───────────────────────────────────────────────────────────
+serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { status: 200, headers: corsHeaders })
+  }
+  if (req.method !== 'POST') {
+    return jsonResponse({ erro: 'Use POST' }, 405)
+  }
+
+  try {
+    const body = await req.json().catch(() => ({}))
+    const userId: string = body?.user_id
+
+    if (!userId) {
+      return jsonResponse({ erro: 'Envie user_id' }, 400)
+    }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
+
+    // 1) Carrega operações do usuário
+    const { data: opsRaw, error: errOps } = await supabase
+      .from('operacoes')
+      .select('ticker, data, quantidade, operacao')
+      .eq('user_id', userId)
+      .order('data', { ascending: true })
+
+    if (errOps) {
+      return jsonResponse({ erro: `Erro ao ler operações: ${errOps.message}` }, 500)
+    }
+
+    const operacoes: Operacao[] = (opsRaw || [])
+      .filter((o: any) => o.ticker && o.data && o.quantidade && o.operacao)
+      .map((o: any) => ({
+        ticker: o.ticker,
+        data: o.data,
+        quantidade: Number(o.quantidade),
+        operacao: o.operacao,
+      }))
+
+    if (operacoes.length === 0) {
+      return jsonResponse({
+        erro: 'Nenhuma operação cadastrada. Importe operações primeiro.',
+      }, 400)
+    }
+
+    // 2) Constrói histórico de custódia (D+2 úteis)
+    const historico = construirHistoricoPosicoes(operacoes)
+    const tickers = Array.from(historico.keys()).sort()
+
+    // 3) Carrega dividendos já registrados (dedup)
+    const { data: divsRaw } = await supabase
+      .from('dividendos')
+      .select('ticker, data_pagamento, tipo_provento')
+      .eq('user_id', userId)
+
+    const existentesPorTicker = new Map<string, Set<string>>()
+    if (divsRaw) {
+      for (const d of divsRaw) {
+        const tk = String(d.ticker).toUpperCase()
+        if (!existentesPorTicker.has(tk)) existentesPorTicker.set(tk, new Set())
+        const dataISO = String(d.data_pagamento).slice(0, 10)
+        const tipo = String(d.tipo_provento || 'RENDIMENTO').toUpperCase()
+        const chave = `${dataISO}_${tipo}`
+        existentesPorTicker.get(tk)!.add(chave)
+      }
+    }
+
+    // 4) Janela de busca: últimos 365 dias
+    const hojeLimite = new Date()
+    hojeLimite.setHours(23, 59, 59, 999)
+    const inicioBusca = new Date(hojeLimite)
+    inicioBusca.setDate(inicioBusca.getDate() - JANELA_DIAS)
+
+    // 5) Processa tickers em paralelo (3 de cada vez)
+    const resultados: ResultadoTicker[] = []
+    const PARALELO = 3
+
+    for (let i = 0; i < tickers.length; i += PARALELO) {
+      const lote = tickers.slice(i, i + PARALELO)
+      const r = await Promise.all(
+        lote.map((t) =>
+          processarTicker(
+            supabase, userId, t,
+            historico.get(t)!,
+            existentesPorTicker,
+            inicioBusca, hojeLimite,
+          )
+        )
+      )
+      resultados.push(...r)
+
+      // Sleep entre lotes para respeitar rate limits
+      if (i + PARALELO < tickers.length) {
+        await new Promise((rs) => setTimeout(rs, 500))
+      }
+    }
+
+    // 6) Estatísticas finais
+    const totalNovos = resultados.reduce((s, r) => s + r.novos, 0)
+    const totalIgnorados = resultados.reduce((s, r) => s + r.ignorados_sem_custodia, 0)
+    const totalDuplicados = resultados.reduce((s, r) => s + r.duplicados, 0)
+    const tickersComErro = resultados.filter((r) => r.erro).length
+
+    const fontes = {
+      fundamentus: resultados.filter((r) => r.fonte === 'Fundamentus').length,
+      statusinvest: resultados.filter((r) => r.fonte === 'StatusInvest').length,
+      nenhuma: resultados.filter((r) => r.fonte === 'nenhuma').length,
+    }
+
+    return jsonResponse({
+      tickers_processados: resultados.length,
+      novos_dividendos: totalNovos,
+      ignorados_sem_custodia: totalIgnorados,
+      duplicados: totalDuplicados,
+      erros: tickersComErro,
+      janela_dias: JANELA_DIAS,
+      data_inicio: inicioBusca.toISOString().slice(0, 10),
+      data_fim: hojeLimite.toISOString().slice(0, 10),
+      fontes,
+      detalhes: resultados,
+    })
+  } catch (e) {
+    return jsonResponse({ erro: String(e) }, 500)
   }
 })
