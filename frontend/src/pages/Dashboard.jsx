@@ -25,15 +25,44 @@ export default function Dashboard() {
   const carregarResumo = async () => {
     setLoading(true)
     try {
-      const { data: carteira } = await supabase
-        .from('carteira').select('*').eq('user_id', user.id)
+      // 1) Carrega TODAS as operações (fonte de verdade da carteira real)
+      const { data: operacoes } = await supabase
+        .from('operacoes').select('*').eq('user_id', user.id)
+        .order('data', { ascending: true })
 
+      // 2) Calcula saldo e custo médio por ticker
+      const posicoes = {}  // { ticker: { qtde, custo, valorInvestido } }
+      if (operacoes && operacoes.length > 0) {
+        for (const op of operacoes) {
+          const t = op.ticker
+          const q = Number(op.quantidade) || 0
+          const p = Number(op.preco_unitario) || 0
+          const tipoOp = (op.operacao || '').toUpperCase()
+          if (!posicoes[t]) posicoes[t] = { qtde: 0, custo: 0 }
+          if (tipoOp === 'COMPRA') {
+            posicoes[t].qtde += q
+            posicoes[t].custo += q * p
+          } else if (tipoOp === 'VENDA') {
+            const pm = posicoes[t].qtde > 0 ? posicoes[t].custo / posicoes[t].qtde : 0
+            posicoes[t].qtde -= q
+            posicoes[t].custo -= q * pm
+            if (posicoes[t].qtde <= 0.0001) {
+              posicoes[t].qtde = 0
+              posicoes[t].custo = 0
+            }
+          }
+        }
+      }
+
+      // 3) Tickers que ainda têm posição (qtde > 0)
+      const tickersAtivos = Object.keys(posicoes).filter(t => posicoes[t].qtde > 0)
+
+      // 4) Busca dados dos ativos (preço, DY, P/VP) apenas para os ativos
       let precosAtivos = {}
-      if (carteira && carteira.length > 0) {
-        const tickers = carteira.map(c => c.ticker)
+      if (tickersAtivos.length > 0) {
         const { data: ativosBD } = await supabase
           .from('ativos').select('ticker, preco, tipo, dy, pvp, razao_social')
-          .in('ticker', tickers)
+          .in('ticker', tickersAtivos)
         if (ativosBD) {
           ativosBD.forEach(a => {
             precosAtivos[a.ticker] = {
@@ -47,30 +76,7 @@ export default function Dashboard() {
         }
       }
 
-      const { data: operacoes } = await supabase
-        .from('operacoes').select('*').eq('user_id', user.id)
-
-      const custoMedio = {}
-      if (operacoes && operacoes.length > 0) {
-        for (const op of operacoes) {
-          const t = op.ticker
-          const q = Number(op.quantidade) || 0
-          const p = Number(op.preco_unitario) || 0
-          const tipoOp = (op.operacao || '').toUpperCase()
-          if (!custoMedio[t]) custoMedio[t] = { qtde: 0, custo: 0 }
-          if (tipoOp === 'COMPRA') {
-            custoMedio[t].qtde += q
-            custoMedio[t].custo += q * p
-          } else if (tipoOp === 'VENDA') {
-            const pm = custoMedio[t].qtde > 0 ? custoMedio[t].custo / custoMedio[t].qtde : 0
-            custoMedio[t].qtde -= q
-            custoMedio[t].custo -= q * pm
-            if (custoMedio[t].qtde < 0) custoMedio[t].qtde = 0
-            if (custoMedio[t].custo < 0) custoMedio[t].custo = 0
-          }
-        }
-      }
-
+      // 5) Totais de aportes e dividendos
       const { data: aportesRows } = await supabase
         .from('aportes').select('valor').eq('user_id', user.id)
       const totalAportado = aportesRows
@@ -81,38 +87,37 @@ export default function Dashboard() {
       const totalDividendos = divsRows
         ? divsRows.reduce((s, d) => s + Number(d.valor || 0), 0) : 0
 
+      // 6) Monta lista de ativos com posição
       const listaAtivos = []
       let patrimonio = 0
-
-      if (carteira && carteira.length > 0) {
-        for (const c of carteira) {
-          const qtde = Number(c.qtde_ideal) || 0
-          if (qtde <= 0) continue
-          const info = precosAtivos[c.ticker] || { preco: 0, tipo: null, dy: 0, pvp: 0, razao_social: null }
-          const valorAtual = qtde * info.preco
-          const cm = custoMedio[c.ticker] || { qtde: 0, custo: 0 }
-          const pm = cm.qtde > 0 ? cm.custo / cm.qtde : 0
-          const custoInvestido = qtde * pm
-          let tipo = info.tipo
-          if (!tipo) {
-            tipo = c.ticker.endsWith('11') && c.ticker.length >= 5 ? 'FII' : 'Acao'
-          }
-          listaAtivos.push({
-            ticker: c.ticker,
-            quantidade: qtde,
-            preco_medio: pm,
-            preco_atual: info.preco,
-            valor_atual: valorAtual,
-            valor_investido: custoInvestido,
-            tipo,
-            dy: info.dy,
-            pvp: info.pvp,
-            razao_social: info.razao_social,
-            tem_preco: info.preco > 0,
-          })
-          patrimonio += valorAtual > 0 ? valorAtual : custoInvestido
+      for (const ticker of tickersAtivos) {
+        const pos = posicoes[ticker]
+        const info = precosAtivos[ticker] || { preco: 0, tipo: null, dy: 0, pvp: 0, razao_social: null }
+        const pm = pos.qtde > 0 ? pos.custo / pos.qtde : 0
+        const valorAtual = pos.qtde * info.preco
+        const custoInvestido = pos.qtde * pm
+        let tipo = info.tipo
+        if (!tipo) {
+          tipo = ticker.endsWith('11') && ticker.length >= 5 ? 'FII' : 'Acao'
         }
+        listaAtivos.push({
+          ticker,
+          quantidade: pos.qtde,
+          preco_medio: pm,
+          preco_atual: info.preco,
+          valor_atual: valorAtual,
+          valor_investido: custoInvestido,
+          tipo,
+          dy: info.dy,
+          pvp: info.pvp,
+          razao_social: info.razao_social,
+          tem_preco: info.preco > 0,
+        })
+        patrimonio += valorAtual > 0 ? valorAtual : custoInvestido
       }
+
+      // Ordena por valor atual decrescente
+      listaAtivos.sort((a, b) => b.valor_atual - a.valor_atual)
 
       setResumo({
         patrimonio,
@@ -127,6 +132,7 @@ export default function Dashboard() {
       setLoading(false)
     }
   }
+
 
   const atualizarCotacoes = async () => {
     if (!ativos || ativos.length === 0) {
