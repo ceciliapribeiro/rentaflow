@@ -57,10 +57,13 @@ export function calcularPrecoMedio(operacoes) {
     }
   }
 
-  // Retorna { ticker: pm_unitario }
+  // Retorna { ticker: { pm_unitario, qtde_real } }
   const resultado = {}
   for (const [t, data] of Object.entries(pm)) {
-    resultado[t] = data.qtde > 0 ? data.custo / data.qtde : 0
+    resultado[t] = {
+      pm_unitario: data.qtde > 0 ? data.custo / data.qtde : 0,
+      qtde_real: data.qtde
+    }
   }
   return resultado
 }
@@ -190,14 +193,18 @@ function avaliarVendas(ativo, pesoReal, pesoAlvo, dyMedioCarteira) {
 // ══════════════════════════════════════════════════════════════════
 
 export function calcularSmartAporte({ carteira, ativosBase, operacoes, valorAporte }) {
-  // 1. Calcula PM por ticker
-  const pmPorTicker = calcularPrecoMedio(operacoes)
+  // 1. Calcula PM e Quantidade Real por ticker a partir do histórico
+  const infoOperacoes = calcularPrecoMedio(operacoes)
 
   // 2. Monta lista enriquecida
   const ativos = []
   for (const c of carteira) {
-    const qtde = Number(c.qtde_ideal) || 0
-    if (qtde <= 0) continue
+    // Busca as informações reais das operações para esse ticker
+    const info = infoOperacoes[c.ticker] || { pm_unitario: 0, qtde_real: 0 }
+    const qtdeReal = info.qtde_real
+
+    // O EXORCISMO: Se o saldo for zero ou menor, ignoramos o ativo completamente!
+    if (qtdeReal <= 0) continue
 
     const base = ativosBase.find(a => a.ticker === c.ticker) || {}
     const preco = Number(base.preco) || 0
@@ -209,10 +216,10 @@ export function calcularSmartAporte({ carteira, ativosBase, operacoes, valorApor
       ticker: c.ticker,
       tipo: base.tipo || (c.ticker.endsWith('11') ? 'FII' : 'Acao'),
       razao_social: base.razao_social || null,
-      quantidade: qtde,
+      quantidade: qtdeReal, // <--- Agora usamos a quantidade REAL
       preco,
-      preco_medio: pmPorTicker[c.ticker] || 0,
-      valor_atual: qtde * preco,
+      preco_medio: info.pm_unitario, // <--- Usamos o PM calculado
+      valor_atual: qtdeReal * preco,
       dy: Number(base.dy) || 0,
       pvp: Number(base.pvp) || 0,
     })
