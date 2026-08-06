@@ -244,13 +244,16 @@ export function calcularSmartAporte({ carteira, ativosBase, operacoes, valorApor
   // 5. DY médio ponderado da carteira
   const dyMedio = ativos.reduce((s, a) => s + a.dy * (a.valor_atual / patrimonioAtual), 0)
 
-  // 6. Calcula défice e score de compra para cada ativo
+// 6. Calcula défice e score de compra para cada ativo
   for (const a of ativos) {
     a.peso_real = a.valor_atual / patrimonioAtual
     a.peso_alvo = pesosAlvo[a.ticker] || 0
     a.alvo_valor = patrimonioProjetado * a.peso_alvo
     a.defice = a.alvo_valor - a.valor_atual
     a.score_compra = calcularScoreCompra(a, a.defice)
+    
+    // 👇 NOVA LINHA: Calcula a quantidade ideal em cotas baseada no valor alvo
+    a.qtde_ideal_calculada = a.preco > 0 ? Math.floor(a.alvo_valor / a.preco) : 0
   }
 
   // 7. Distribui o aporte (greedy por score)

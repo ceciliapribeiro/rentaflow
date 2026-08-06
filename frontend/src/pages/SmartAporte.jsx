@@ -72,26 +72,50 @@ const carregarDados = async () => {
     }
   }
 
-  const handleCalcular = () => {
+const handleCalcular = async () => {
     const valor = parseFloat(String(valorAporte).replace(',', '.'))
     if (!valor || valor <= 0) {
       setErro('Informe um valor de aporte válido.')
       return
     }
+    
     setErro(null)
     setCalculando(true)
 
-    setTimeout(() => {
+    try {
+      // 1. Roda o cálculo matemático
       const r = calcularSmartAporte({
         carteira,
         ativosBase,
         operacoes,
         valorAporte: valor,
       })
+
+      if (r.erro) {
+        setErro(r.erro)
+        setCalculando(false)
+        return
+      }
+
+      // 2. Grava a sugestão de qtde_ideal no Supabase para cada ativo
+      const promessasDeUpdate = r.ativos.map(ativo => 
+        supabase
+          .from('carteira')
+          .update({ qtde_ideal: ativo.qtde_ideal_calculada })
+          .eq('ticker', ativo.ticker)
+      )
+
+      // Aguarda todos os updates terminarem
+      await Promise.all(promessasDeUpdate)
+
+      // 3. Atualiza a tela com o resultado
       setResultado(r)
+      
+    } catch (err) {
+      setErro('Erro ao gravar as quantidades ideais no banco: ' + err.message)
+    } finally {
       setCalculando(false)
-      if (r.erro) setErro(r.erro)
-    }, 100)
+    }
   }
 
   if (loading) {
