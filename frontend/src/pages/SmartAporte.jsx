@@ -29,7 +29,7 @@ export default function SmartAporte() {
     carregarDados()
   }, [])
 
-  const carregarDados = async () => {
+const carregarDados = async () => {
     setLoading(true)
     setErro(null)
     try {
@@ -43,9 +43,28 @@ export default function SmartAporte() {
       if (ativosRes.error) throw ativosRes.error
       if (operacoesRes.error) throw operacoesRes.error
 
+      const todasOperacoes = operacoesRes.data || []
+
+      // 1. Consolida o saldo atual de cada ticker
+      const saldos = todasOperacoes.reduce((acc, op) => {
+        const qtd = parseFloat(op.quantidade)
+        if (!acc[op.ticker]) acc[op.ticker] = 0
+        acc[op.ticker] += op.operacao === 'COMPRA' ? qtd : -qtd
+        return acc
+      }, {})
+
+      // 2. Filtra o array de operações apenas para os ativos que ainda estão na carteira (saldo > 0)
+      // O Math.round resolve o problema de sobras fracionadas como 0.00001
+      const operacoesAtivas = todasOperacoes.filter(op => {
+        const saldoArredondado = Math.round(saldos[op.ticker] * 1000) / 1000
+        return saldoArredondado > 0
+      })
+
       setCarteira(carteiraRes.data || [])
       setAtivosBase(ativosRes.data || [])
-      setOperacoes(operacoesRes.data || [])
+      
+      // 3. Passa apenas as operações validadas para o state
+      setOperacoes(operacoesAtivas)
     } catch (err) {
       setErro('Erro ao carregar dados: ' + err.message)
     } finally {
