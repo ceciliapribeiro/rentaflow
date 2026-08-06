@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -7,6 +7,7 @@ import {
   TrendingUp, Wallet, DollarSign, PieChart,
   RefreshCw, ArrowUpRight, ArrowDownRight,
   Upload, Zap, Database, Calculator, ChevronRight,
+  ArrowUpDown, ChevronUp, ChevronDown
 } from 'lucide-react'
 
 export default function Dashboard() {
@@ -20,18 +21,21 @@ export default function Dashboard() {
   const [atualizandoCotacoes, setAtualizandoCotacoes] = useState(false)
   const [statusCotacao, setStatusCotacao] = useState(null)
 
+  // Estado para controlar a ordenação (padrão: valor_atual do maior para o menor)
+  const [sortConfig, setSortConfig] = useState({ key: 'valor_atual', direction: 'desc' })
+
   useEffect(() => { if (user) carregarResumo() }, [user])
 
   const carregarResumo = async () => {
     setLoading(true)
     try {
-      // 1) Carrega TODAS as operações (fonte de verdade da carteira real)
+      // 1) Carrega TODAS as operações
       const { data: operacoes } = await supabase
         .from('operacoes').select('*').eq('user_id', user.id)
         .order('data', { ascending: true })
 
       // 2) Calcula saldo e custo médio por ticker
-      const posicoes = {}  // { ticker: { qtde, custo, valorInvestido } }
+      const posicoes = {} 
       if (operacoes && operacoes.length > 0) {
         for (const op of operacoes) {
           const t = op.ticker
@@ -54,10 +58,10 @@ export default function Dashboard() {
         }
       }
 
-      // 3) Tickers que ainda têm posição (qtde > 0)
+      // 3) Tickers ativos
       const tickersAtivos = Object.keys(posicoes).filter(t => posicoes[t].qtde > 0)
 
-      // 4) Busca dados dos ativos (preço, DY, P/VP) apenas para os ativos
+      // 4) Busca dados dos ativos
       let precosAtivos = {}
       if (tickersAtivos.length > 0) {
         const { data: ativosBD } = await supabase
@@ -100,6 +104,11 @@ export default function Dashboard() {
         if (!tipo) {
           tipo = ticker.endsWith('11') && ticker.length >= 5 ? 'FII' : 'Acao'
         }
+        
+        // NOVO: Cálculo de variação embutido no objeto para podermos ordená-lo
+        const variacao = custoInvestido > 0 
+          ? ((valorAtual - custoInvestido) / custoInvestido) * 100 : 0
+
         listaAtivos.push({
           ticker,
           quantidade: pos.qtde,
@@ -110,14 +119,12 @@ export default function Dashboard() {
           tipo,
           dy: info.dy,
           pvp: info.pvp,
+          variacao,
           razao_social: info.razao_social,
           tem_preco: info.preco > 0,
         })
         patrimonio += valorAtual > 0 ? valorAtual : custoInvestido
       }
-
-      // Ordena por valor atual decrescente
-      listaAtivos.sort((a, b) => b.valor_atual - a.valor_atual)
 
       setResumo({
         patrimonio,
@@ -132,7 +139,6 @@ export default function Dashboard() {
       setLoading(false)
     }
   }
-
 
   const atualizarCotacoes = async () => {
     if (!ativos || ativos.length === 0) {
@@ -169,6 +175,58 @@ export default function Dashboard() {
     }
   }
 
+  // --- FUNÇÕES DE ORDENAÇÃO ---
+  const handleSort = (key) => {
+    let direction = 'asc'
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc'
+    }
+    setSortConfig({ key, direction })
+  }
+
+  const sortedAtivos = useMemo(() => {
+    let sortableItems = [...ativos]
+    if (sortConfig !== null) {
+      sortableItems.sort((a, b) => {
+        // Tratamento para strings (ex: ticker, tipo)
+        if (typeof a[sortConfig.key] === 'string') {
+          return sortConfig.direction === 'asc' 
+            ? a[sortConfig.key].localeCompare(b[sortConfig.key])
+            : b[sortConfig.key].localeCompare(a[sortConfig.key])
+        }
+        // Tratamento para números
+        if (a[sortConfig.key] < b[sortConfig.key]) {
+          return sortConfig.direction === 'asc' ? -1 : 1
+        }
+        if (a[sortConfig.key] > b[sortConfig.key]) {
+          return sortConfig.direction === 'asc' ? 1 : -1
+        }
+        return 0
+      })
+    }
+    return sortableItems
+  }, [ativos, sortConfig])
+
+  // Componente auxiliar para renderizar os cabeçalhos da tabela
+  const HeaderCell = ({ label, sortKey, align = 'left' }) => {
+    const isActive = sortConfig.key === sortKey
+    return (
+      <th 
+        className={`py-2 px-3 text-${align} cursor-pointer hover:bg-gray-200 transition-colors select-none group`}
+        onClick={() => handleSort(sortKey)}
+      >
+        <div className={`flex items-center gap-1 ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
+          {label}
+          {isActive ? (
+            sortConfig.direction === 'asc' ? <ChevronUp size={14} className="text-gray-700" /> : <ChevronDown size={14} className="text-gray-700" />
+          ) : (
+            <ArrowUpDown size={14} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+          )}
+        </div>
+      </th>
+    )
+  }
+
   const formatBRL = (v) => new Intl.NumberFormat('pt-BR', {
     style: 'currency', currency: 'BRL',
   }).format(v)
@@ -176,7 +234,6 @@ export default function Dashboard() {
   const rentabilidade = resumo.totalAportes > 0
     ? ((resumo.patrimonio - resumo.totalAportes) / resumo.totalAportes * 100) : 0
 
-  // Cards clicáveis — cada um navega para sua página
   const CardClicavel = ({ titulo, valor, sub, icon: Icon, cor, destino, extraClasses = '' }) => (
     <button
       onClick={() => navigate(destino)}
@@ -203,7 +260,6 @@ export default function Dashboard() {
       />
 
       <main className="max-w-7xl mx-auto px-4 py-6">
-        {/* 4 cards clicáveis */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <CardClicavel
             titulo="Patrimônio"
@@ -249,7 +305,6 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* Carteira detalhada */}
         <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
           <div className="px-6 py-4 border-b flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -280,7 +335,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Status da atualização */}
           {statusCotacao && (
             <div className={`px-6 py-2 text-sm border-b ${
               statusCotacao.etapa === 'erro' ? 'bg-red-50 text-red-700' :
@@ -309,22 +363,20 @@ export default function Dashboard() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b">
-                  <tr className="text-left text-gray-600">
-                    <th className="py-2 px-3">Ticker</th>
-                    <th className="py-2 px-3">Tipo</th>
-                    <th className="py-2 px-3 text-right">Qtde</th>
-                    <th className="py-2 px-3 text-right">Preço médio</th>
-                    <th className="py-2 px-3 text-right">Preço atual</th>
-                    <th className="py-2 px-3 text-right">Valor atual</th>
-                    <th className="py-2 px-3 text-right">DY</th>
-                    <th className="py-2 px-3 text-right">P/VP</th>
-                    <th className="py-2 px-3 text-right">Variação</th>
+                  <tr className="text-gray-600">
+                    <HeaderCell label="Ticker" sortKey="ticker" />
+                    <HeaderCell label="Tipo" sortKey="tipo" />
+                    <HeaderCell label="Qtde" sortKey="quantidade" align="right" />
+                    <HeaderCell label="Preço médio" sortKey="preco_medio" align="right" />
+                    <HeaderCell label="Preço atual" sortKey="preco_atual" align="right" />
+                    <HeaderCell label="Valor atual" sortKey="valor_atual" align="right" />
+                    <HeaderCell label="DY" sortKey="dy" align="right" />
+                    <HeaderCell label="P/VP" sortKey="pvp" align="right" />
+                    <HeaderCell label="Variação" sortKey="variacao" align="right" />
                   </tr>
                 </thead>
                 <tbody>
-                  {ativos.map(a => {
-                    const variacao = a.valor_investido > 0
-                      ? ((a.valor_atual - a.valor_investido) / a.valor_investido) * 100 : 0
+                  {sortedAtivos.map(a => {
                     return (
                       <tr key={a.ticker}
                         onClick={() => navigate(`/ativo/${a.ticker}`)}
@@ -346,9 +398,9 @@ export default function Dashboard() {
                           {a.pvp > 0 ? a.pvp.toFixed(2) : '-'}
                         </td>
                         <td className={`py-2 px-3 text-right font-medium ${
-                          variacao >= 0 ? 'text-green-600' : 'text-red-600'
+                          a.variacao >= 0 ? 'text-green-600' : 'text-red-600'
                         }`}>
-                          {a.tem_preco ? `${variacao >= 0 ? '+' : ''}${variacao.toFixed(2)}%` : '-'}
+                          {a.tem_preco ? `${a.variacao >= 0 ? '+' : ''}${a.variacao.toFixed(2)}%` : '-'}
                         </td>
                       </tr>
                     )
