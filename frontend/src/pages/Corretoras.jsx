@@ -13,10 +13,13 @@ const CORES_PADRAO = [
 ]
 
 import { formatBRL, formatData } from '../utils/formatters'
+import { useToast, useConfirm } from '../contexts/ToastContext'
 
 export default function Corretoras() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const { toast } = useToast()
+  const { confirm } = useConfirm()
 
   const [loading, setLoading] = useState(true)
   const [corretoras, setCorretoras] = useState([])
@@ -210,12 +213,19 @@ export default function Corretoras() {
     const r = resumoPorCorretora[c.id] || { operacoes: 0, dividendos: 0, aportes: 0 }
     const total = r.operacoes + r.dividendos + r.aportes
     if (total > 0) {
-      const ok = confirm(
-        `${c.nome} tem ${r.operacoes} operações, ${r.dividendos} dividendos e ${r.aportes} aportes vinculados.\n\nAo deletar, os registros ficarão SEM corretora. Você poderá reatribuí-los depois.\n\nConfirmar?`
-      )
+      const ok = await confirm({
+        title: `Deletar "${c.nome}"?`,
+        message: `Esta corretora tem ${r.operacoes} operações, ${r.dividendos} dividendos e ${r.aportes} aportes vinculados.\n\nAo deletar, os registros ficarão SEM corretora. Você poderá reatribuí-los depois.`,
+        confirmLabel: 'Deletar',
+        danger: true,
+      })
       if (!ok) return
     } else {
-      const ok = confirm(`Deletar a corretora "${c.nome}"?`)
+      const ok = await confirm({
+        title: `Deletar "${c.nome}"?`,
+        confirmLabel: 'Deletar',
+        danger: true,
+      })
       if (!ok) return
     }
     try {

@@ -6,9 +6,12 @@ import {
   ArrowLeft, Plus, Edit2, Trash2, Save, X, TrendingUp, Building2,
 } from 'lucide-react'
 import { formatBRL, formatData } from '../utils/formatters'
+import { useToast, useConfirm } from '../contexts/ToastContext'
 
 export default function Operacoes() {
   const { user } = useAuth()
+  const { toast } = useToast()
+  const { confirm } = useConfirm()
   const navigate = useNavigate()
   const [operacoes, setOperacoes] = useState([])
   const [corretoras, setCorretoras] = useState([])
@@ -98,7 +101,7 @@ export default function Operacoes() {
 
   const salvar = async () => {
     if (!form.ticker || !form.quantidade || !form.preco_unitario || !form.corretora_id) {
-      alert('Preencha todos os campos obrigatórios.')
+      toast.warning('Preencha todos os campos obrigatórios.')
       return
     }
     const ticker = form.ticker.toUpperCase().trim()
@@ -143,15 +146,21 @@ export default function Operacoes() {
       limparForm()
       await carregarOperacoes()
     } catch (err) {
-      alert(`Erro ao salvar: ${err.message}`)
+      toast.error(`Erro ao salvar: ${err.message}`)
     }
   }
 
   const excluir = async (id) => {
-    if (!confirm('Tem certeza que deseja excluir esta operação?')) return
+    const ok = await confirm({
+      title: 'Excluir operação?',
+      message: 'Esta ação não pode ser desfeita.',
+      confirmLabel: 'Excluir',
+      danger: true,
+    })
+    if (!ok) return
     const { error } = await supabase.from('operacoes').delete().eq('id', id)
     if (error) {
-      alert(`Erro ao excluir: ${error.message}`)
+      toast.error(`Erro ao excluir: ${error.message}`)
       return
     }
     await carregarOperacoes()

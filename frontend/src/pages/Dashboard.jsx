@@ -11,10 +11,12 @@ import {
 } from 'lucide-react'
 import { formatBRL } from '../utils/formatters'
 import { calcularPosicoes, tickersAtivos as getTickers } from '../utils/calcularPosicoes'
+import { useToast } from '../contexts/ToastContext'
 
 export default function Dashboard() {
   const { user } = useAuth()
   const navigate = useNavigate()
+  const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [resumo, setResumo] = useState({
     patrimonio: 0, totalAportes: 0, totalDividendos: 0, totalAtivos: 0,
@@ -123,7 +125,7 @@ export default function Dashboard() {
 
   const atualizarCotacoes = async () => {
     if (!ativos || ativos.length === 0) {
-      alert('Nenhum ativo na carteira para atualizar.')
+      toast.warning('Nenhum ativo na carteira para atualizar.')
       return
     }
     setAtualizandoCotacoes(true)

@@ -9,9 +9,12 @@ import {
   DollarSign, Calendar, TrendingUp, RefreshCw, Search,
 } from 'lucide-react'
 import { formatBRL, formatData } from '../utils/formatters'
+import { useToast, useConfirm } from '../contexts/ToastContext'
 
 export default function Dividendos() {
   const { user } = useAuth()
+  const { toast } = useToast()
+  const { confirm } = useConfirm()
   const [dividendos, setDividendos] = useState([])
   const [loading, setLoading] = useState(true)
   const [atualizando, setAtualizando] = useState(false)
@@ -48,9 +51,12 @@ export default function Dividendos() {
   }
 
   const atualizarDividendos = async () => {
-    if (!confirm('Buscar novos proventos dos últimos 365 dias? Isso pode levar 2-5 minutos.')) {
-      return
-    }
+    const ok = await confirm({
+      title: 'Buscar proventos?',
+      message: 'Buscar novos proventos dos últimos 365 dias?\nIsso pode levar 2–5 minutos.',
+      confirmLabel: 'Buscar',
+    })
+    if (!ok) return
 
     setAtualizando(true)
     setStatusAtualizacao({ etapa: 'iniciando', mensagem: 'Conectando à fonte de dados...' })

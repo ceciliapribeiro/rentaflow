@@ -9,9 +9,13 @@ import {
   Plus, Edit2, Trash2, Save, X, Wallet, Calendar, TrendingUp,
 } from 'lucide-react'
 import { formatBRL, formatData } from '../utils/formatters'
+import { useToast } from '../contexts/ToastContext'
+import { useConfirm } from '../contexts/ToastContext'
 
 export default function Aportes() {
   const { user } = useAuth()
+  const { toast } = useToast()
+  const { confirm } = useConfirm()
 
   const [aportes, setAportes] = useState([])
 
@@ -96,7 +100,7 @@ export default function Aportes() {
 
   const salvar = async () => {
     if (!form.data || !form.valor) {
-      alert('Preencha pelo menos data e valor.')
+      toast.warning('Preencha pelo menos data e valor.')
       return
     }
 
@@ -121,15 +125,21 @@ export default function Aportes() {
       limparForm()
       await carregarAportes()
     } catch (err) {
-      alert(`Erro ao salvar: ${err.message}`)
+      toast.error(`Erro ao salvar: ${err.message}`)
     }
   }
 
   const excluir = async (id) => {
-    if (!confirm('Tem certeza que deseja excluir este aporte?')) return
+    const ok = await confirm({
+      title: 'Excluir aporte?',
+      message: 'Esta ação não pode ser desfeita.',
+      confirmLabel: 'Excluir',
+      danger: true,
+    })
+    if (!ok) return
     const { error } = await supabase.from('aportes').delete().eq('id', id)
     if (error) {
-      alert(`Erro ao excluir: ${error.message}`)
+      toast.error(`Erro ao excluir: ${error.message}`)
       return
     }
     await carregarAportes()
