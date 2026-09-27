@@ -12,13 +12,7 @@ const CORES_PADRAO = [
   '#1a6b45', '#1e40af', '#7c3d0e', '#374151', '#5b21b6',
 ]
 
-const formatBRL = (v) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
-const formatData = (iso) => {
-  if (!iso) return '—'
-  const [a, m, d] = iso.split('-')
-  return `${d}/${m}/${a}`
-}
+import { formatBRL, formatData } from '../utils/formatters'
 
 export default function Corretoras() {
   const { user } = useAuth()

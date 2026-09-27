@@ -9,6 +9,8 @@ import {
   Upload, Zap, Database, Calculator, ChevronRight,
   ArrowUpDown, ChevronUp, ChevronDown
 } from 'lucide-react'
+import { formatBRL } from '../utils/formatters'
+import { calcularPosicoes, tickersAtivos as getTickers } from '../utils/calcularPosicoes'
 
 export default function Dashboard() {
   const { user } = useAuth()
@@ -35,31 +37,10 @@ export default function Dashboard() {
         .order('data', { ascending: true })
 
       // 2) Calcula saldo e custo médio por ticker
-      const posicoes = {} 
-      if (operacoes && operacoes.length > 0) {
-        for (const op of operacoes) {
-          const t = op.ticker
-          const q = Number(op.quantidade) || 0
-          const p = Number(op.preco_unitario) || 0
-          const tipoOp = (op.operacao || '').toUpperCase()
-          if (!posicoes[t]) posicoes[t] = { qtde: 0, custo: 0 }
-          if (tipoOp === 'COMPRA') {
-            posicoes[t].qtde += q
-            posicoes[t].custo += q * p
-          } else if (tipoOp === 'VENDA') {
-            const pm = posicoes[t].qtde > 0 ? posicoes[t].custo / posicoes[t].qtde : 0
-            posicoes[t].qtde -= q
-            posicoes[t].custo -= q * pm
-            if (posicoes[t].qtde <= 0.0001) {
-              posicoes[t].qtde = 0
-              posicoes[t].custo = 0
-            }
-          }
-        }
-      }
+      const posicoes = calcularPosicoes(operacoes || [])
 
       // 3) Tickers ativos
-      const tickersAtivos = Object.keys(posicoes).filter(t => posicoes[t].qtde > 0)
+      const tickersAtivos = getTickers(posicoes)
 
       // 4) Busca dados dos ativos
       let precosAtivos = {}
@@ -227,9 +208,6 @@ export default function Dashboard() {
     )
   }
 
-  const formatBRL = (v) => new Intl.NumberFormat('pt-BR', {
-    style: 'currency', currency: 'BRL',
-  }).format(v)
 
   const rentabilidade = resumo.totalAportes > 0
     ? ((resumo.patrimonio - resumo.totalAportes) / resumo.totalAportes * 100) : 0

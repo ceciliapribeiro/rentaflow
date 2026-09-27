@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import {
   ArrowLeft, Plus, Edit2, Trash2, Save, X, TrendingUp, Building2,
 } from 'lucide-react'
+import { formatBRL, formatData } from '../utils/formatters'
 
 export default function Operacoes() {
   const { user } = useAuth()
@@ -156,15 +157,6 @@ export default function Operacoes() {
     await carregarOperacoes()
   }
 
-  const formatBRL = (v) => new Intl.NumberFormat('pt-BR', {
-    style: 'currency', currency: 'BRL',
-  }).format(v)
-
-  const formatData = (d) => {
-    if (!d) return ''
-    const [y, m, day] = d.split('-')
-    return `${day}/${m}/${y}`
-  }
 
   // Filtros
   const opsFiltradas = operacoes.filter(op => {

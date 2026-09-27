@@ -6,9 +6,7 @@ import {
   TrendingDown, Calculator, BarChart3
 } from 'lucide-react'
 import { calcularSmartAporte } from '../utils/smartAporte'
-
-const formatBRL = (v) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
+import { formatBRL } from '../utils/formatters'
 
 const formatPct = (v, casas = 2) =>
   v != null ? `${(v * 100).toFixed(casas)}%` : '—'

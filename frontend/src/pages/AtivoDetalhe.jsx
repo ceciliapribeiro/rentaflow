@@ -7,14 +7,7 @@ import {
   Wallet, Activity, Building2, AlertTriangle, Calendar,
   ArrowUpRight, ArrowDownRight, BarChart3,
 } from 'lucide-react'
-
-const formatBRL = (v) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
-const formatData = (iso) => {
-  if (!iso) return '—'
-  const [a, m, d] = iso.split('-')
-  return `${d}/${m}/${a}`
-}
+import { formatBRL, formatData } from '../utils/formatters'
 
 export default function AtivoDetalhe() {
   const { user } = useAuth()

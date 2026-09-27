@@ -96,14 +96,7 @@ export const encontrarCampo = (row, nomesPossiveis) => {
   return null
 }
 
-export const formatBRL = (v) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)
-
-export const formatData = (iso) => {
-  if (!iso) return ''
-  const [a, m, d] = iso.split('-')
-  return `${d}/${m}/${a}`
-}
+export { formatBRL, formatData } from './formatters'
 
 export const processarOperacoes = (jsonData) => {
   const resultado = []

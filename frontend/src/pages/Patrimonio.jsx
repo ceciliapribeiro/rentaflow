@@ -10,6 +10,8 @@ import {
   PieChart as PieIcon, TrendingUp, Wallet, DollarSign,
   ArrowUpRight, ArrowDownRight,
 } from 'lucide-react'
+import { formatBRL } from '../utils/formatters'
+import { calcularPosicoes, inferirTipo } from '../utils/calcularPosicoes'
 
 const CORES_TIPO = {
   FII:   '#7c3aed',
@@ -24,8 +26,6 @@ const CORES_PIZZA = [
   '#dc2626', '#db2777', '#65a30d', '#0284c7', '#9333ea',
 ]
 
-const formatBRL = (v) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
 
 function TooltipPizza({ active, payload }) {
   if (active && payload && payload.length) {
@@ -89,26 +89,7 @@ export default function Patrimonio() {
     }
   }
 
-  const posicoes = useMemo(() => {
-    const pos = {}
-    for (const op of operacoes) {
-      const t = op.ticker
-      const q = Number(op.quantidade) || 0
-      const p = Number(op.preco_unitario) || 0
-      const tipoOp = (op.operacao || '').toUpperCase()
-      if (!pos[t]) pos[t] = { qtde: 0, custo: 0 }
-      if (tipoOp === 'COMPRA') {
-        pos[t].qtde += q
-        pos[t].custo += q * p
-      } else if (tipoOp === 'VENDA') {
-        const pm = pos[t].qtde > 0 ? pos[t].custo / pos[t].qtde : 0
-        pos[t].qtde -= q
-        pos[t].custo -= q * pm
-        if (pos[t].qtde <= 0.0001) { pos[t].qtde = 0; pos[t].custo = 0 }
-      }
-    }
-    return pos
-  }, [operacoes])
+  const posicoes = useMemo(() => calcularPosicoes(operacoes), [operacoes])
 
   const listaAtivos = useMemo(() => {
     const infoMap = {}
@@ -123,8 +104,7 @@ export default function Patrimonio() {
       const valorAtual = pos.qtde * preco
       const valorInvestido = pos.qtde * pm
       const valorEfetivo = valorAtual > 0 ? valorAtual : valorInvestido
-      let tipo = info.tipo
-      if (!tipo) tipo = ticker.endsWith('11') && ticker.length >= 5 ? 'FII' : 'Acao'
+      const tipo = inferirTipo(ticker, info.tipo)
       lista.push({
         ticker,
         razao_social: info.razao_social || ticker,

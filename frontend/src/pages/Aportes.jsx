@@ -8,10 +8,13 @@ import {
 import {
   Plus, Edit2, Trash2, Save, X, Wallet, Calendar, TrendingUp,
 } from 'lucide-react'
+import { formatBRL, formatData } from '../utils/formatters'
 
 export default function Aportes() {
   const { user } = useAuth()
+
   const [aportes, setAportes] = useState([])
+
   const [corretoras, setCorretoras] = useState([])
   const [loading, setLoading] = useState(true)
   const [criandoNovo, setCriandoNovo] = useState(false)
@@ -132,15 +135,6 @@ export default function Aportes() {
     await carregarAportes()
   }
 
-  const formatBRL = (v) => new Intl.NumberFormat('pt-BR', {
-    style: 'currency', currency: 'BRL',
-  }).format(v)
-
-  const formatData = (d) => {
-    if (!d) return ''
-    const [y, m, day] = d.split('-')
-    return `${day}/${m}/${y}`
-  }
 
   // Anos disponíveis (para o filtro)
   const anosDisponiveis = useMemo(() => {

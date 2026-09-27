@@ -8,6 +8,7 @@ import {
 import {
   DollarSign, Calendar, TrendingUp, RefreshCw, Search,
 } from 'lucide-react'
+import { formatBRL, formatData } from '../utils/formatters'
 
 export default function Dividendos() {
   const { user } = useAuth()
@@ -79,16 +80,6 @@ export default function Dividendos() {
     }
   }
 
-  const formatBRL = (v) => new Intl.NumberFormat('pt-BR', {
-    style: 'currency', currency: 'BRL',
-  }).format(v)
-
-  const formatData = (d) => {
-    if (!d) return ''
-    const data = String(d).slice(0, 10)
-    const [y, m, day] = data.split('-')
-    return `${day}/${m}/${y}`
-  }
 
   // Anos disponíveis para filtro
   const anosDisponiveis = useMemo(() => {
