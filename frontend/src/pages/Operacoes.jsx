@@ -7,20 +7,35 @@ import {
 } from 'lucide-react'
 import { formatBRL, formatData } from '../utils/formatters'
 import { useToast, useConfirm } from '../contexts/ToastContext'
+import { useCorretora } from '../contexts/CorretoraContext'
 
 export default function Operacoes() {
   const { user } = useAuth()
   const { toast } = useToast()
   const { confirm } = useConfirm()
   const navigate = useNavigate()
+  const {
+    corretoras,
+    corretoraSelecionada,
+    setCorretoraSelecionada,
+    corretoraAtiva,
+  } = useCorretora()
+
   const [operacoes, setOperacoes] = useState([])
-  const [corretoras, setCorretoras] = useState([])
   const [loading, setLoading] = useState(true)
   const [criandoNova, setCriandoNova] = useState(false)
   const [editandoId, setEditandoId] = useState(null)
-  const [filtroCorretora, setFiltroCorretora] = useState('todas')
   const [filtroTipo, setFiltroTipo] = useState('todas')
   const [filtroTicker, setFiltroTicker] = useState('')
+
+  const getCorretoraPadraoForm = () => {
+    if (corretoraSelecionada && corretoraSelecionada !== 'todas') {
+      return corretoraSelecionada
+    }
+    return corretoras.length > 0
+      ? String(corretoras.find(c => c.nome === 'Inter')?.id || corretoras[0].id)
+      : ''
+  }
 
   const [form, setForm] = useState({
     data: new Date().toISOString().split('T')[0],
@@ -33,17 +48,9 @@ export default function Operacoes() {
 
   useEffect(() => {
     if (user) {
-      carregarCorretoras()
       carregarOperacoes()
     }
   }, [user])
-
-  const carregarCorretoras = async () => {
-    const { data } = await supabase
-      .from('corretoras').select('id, nome, cor')
-      .eq('user_id', user.id).order('nome')
-    setCorretoras(data || [])
-  }
 
   const carregarOperacoes = async () => {
     setLoading(true)
@@ -63,9 +70,7 @@ export default function Operacoes() {
       quantidade: '',
       preco_unitario: '',
       operacao: 'COMPRA',
-      corretora_id: corretoras.length > 0
-        ? String(corretoras.find(c => c.nome === 'Inter')?.id || corretoras[0].id)
-        : '',
+      corretora_id: getCorretoraPadraoForm(),
     })
     setEditandoId(null)
     setCriandoNova(false)
@@ -80,9 +85,7 @@ export default function Operacoes() {
       quantidade: '',
       preco_unitario: '',
       operacao: 'COMPRA',
-      corretora_id: corretoras.length > 0
-        ? String(corretoras.find(c => c.nome === 'Inter')?.id || corretoras[0].id)
-        : '',
+      corretora_id: getCorretoraPadraoForm(),
     })
   }
 
@@ -169,7 +172,7 @@ export default function Operacoes() {
 
   // Filtros
   const opsFiltradas = operacoes.filter(op => {
-    if (filtroCorretora !== 'todas' && String(op.corretora_id) !== String(filtroCorretora)) return false
+    if (corretoraSelecionada !== 'todas' && String(op.corretora_id) !== String(corretoraSelecionada)) return false
     if (filtroTipo !== 'todas' && op.operacao !== filtroTipo) return false
     if (filtroTicker && !op.ticker.toLowerCase().includes(filtroTicker.toLowerCase())) return false
     return true
@@ -184,28 +187,63 @@ export default function Operacoes() {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-green-800 text-white">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center gap-4">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center gap-4 flex-wrap">
           <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-green-700 rounded-lg">
             <ArrowLeft size={20} />
           </button>
           <div className="flex-1">
             <h1 className="text-xl font-bold">Operações</h1>
-            <p className="text-green-200 text-sm">Compras e vendas registradas</p>
+            <p className="text-green-200 text-sm">
+              {corretoraSelecionada === 'todas'
+                ? 'Compras e vendas de todas as corretoras'
+                : `Operações filtradas: ${corretoraAtiva?.nome || 'Corretora Selecionada'}`}
+            </p>
           </div>
-          <button
-            onClick={iniciarNova}
-            className="flex items-center gap-2 bg-white text-green-800 px-4 py-2 rounded-lg hover:bg-green-50 font-medium text-sm"
-          >
-            <Plus size={16} /> Adicionar operação
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={iniciarNova}
+              className="flex items-center gap-2 bg-white text-green-800 px-4 py-2 rounded-lg hover:bg-green-50 font-medium text-sm shadow-sm"
+            >
+              <Plus size={16} /> Adicionar operação
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {/* Banner se filtrado por corretora */}
+        {corretoraSelecionada !== 'todas' && (
+          <div
+            className="mb-6 p-4 rounded-xl border flex items-center justify-between flex-wrap gap-2 shadow-sm"
+            style={{
+              backgroundColor: `${corretoraAtiva?.cor || '#15803d'}12`,
+              borderColor: `${corretoraAtiva?.cor || '#15803d'}40`,
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <span
+                className="w-3.5 h-3.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: corretoraAtiva?.cor || '#15803d' }}
+              />
+              <p className="text-sm font-bold text-gray-800">
+                Visualizando operações da corretora: <span className="underline">{corretoraAtiva?.nome}</span>
+              </p>
+            </div>
+            <button
+              onClick={() => setCorretoraSelecionada('todas')}
+              className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg shadow-sm"
+            >
+              ← Ver Todas as Corretoras
+            </button>
+          </div>
+        )}
+
         {/* Cards de resumo */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-xl shadow-sm border p-4">
-            <p className="text-xs text-gray-500">Total de operações</p>
+            <p className="text-xs text-gray-500">
+              Total de operações {corretoraSelecionada !== 'todas' ? `(${corretoraAtiva?.nome})` : ''}
+            </p>
             <p className="text-2xl font-bold text-gray-800">{opsFiltradas.length}</p>
           </div>
           <div className="bg-white rounded-xl shadow-sm border p-4">
@@ -220,13 +258,13 @@ export default function Operacoes() {
 
         {/* Filtros */}
         <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap gap-3 items-center">
-          <Building2 size={18} className="text-gray-500" />
+          <Building2 size={18} className="text-green-700" />
           <select
-            value={filtroCorretora}
-            onChange={(e) => setFiltroCorretora(e.target.value)}
-            className="px-3 py-1.5 border rounded-lg text-sm bg-white"
+            value={corretoraSelecionada}
+            onChange={(e) => setCorretoraSelecionada(e.target.value)}
+            className="px-3 py-1.5 border rounded-lg text-sm bg-white font-medium text-gray-700"
           >
-            <option value="todas">Todas as corretoras</option>
+            <option value="todas">🏢 Todas as corretoras</option>
             {corretoras.map(c => (
               <option key={c.id} value={c.id}>{c.nome}</option>
             ))}

@@ -3,16 +3,20 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
   ArrowLeft, TrendingUp, AlertTriangle, ShoppingCart,
-  TrendingDown, Calculator, BarChart3
+  TrendingDown, Calculator, BarChart3, Building2,
 } from 'lucide-react'
 import { calcularSmartAporte } from '../utils/smartAporte'
 import { formatBRL } from '../utils/formatters'
-
-const formatPct = (v, casas = 2) =>
-  v != null ? `${(v * 100).toFixed(casas)}%` : '—'
+import { useCorretora } from '../contexts/CorretoraContext'
 
 export default function SmartAporte() {
   const navigate = useNavigate()
+  const {
+    corretoras,
+    corretoraSelecionada,
+    setCorretoraSelecionada,
+    corretoraAtiva,
+  } = useCorretora()
   const [valorAporte, setValorAporte] = useState('1000')
   const [loading, setLoading] = useState(true)
   const [calculando, setCalculando] = useState(false)
@@ -23,52 +27,68 @@ export default function SmartAporte() {
   const [erro, setErro] = useState(null)
   const [tab, setTab] = useState('compras')
 
+  const [todasOperacoesBrutas, setTodasOperacoesBrutas] = useState([])
+  const [carteiraBruta, setCarteiraBruta] = useState([])
+
   useEffect(() => {
     carregarDados()
   }, [])
 
-const carregarDados = async () => {
+  const carregarDados = async () => {
     setLoading(true)
     setErro(null)
     try {
       const [carteiraRes, ativosRes, operacoesRes] = await Promise.all([
         supabase.from('carteira').select('ticker, qtde_ideal'),
         supabase.from('ativos').select('ticker, tipo, razao_social, preco, dy, pvp'),
-        supabase.from('operacoes').select('ticker, quantidade, preco_unitario, operacao'),
+        supabase.from('operacoes').select('ticker, quantidade, preco_unitario, operacao, corretora_id'),
       ])
 
       if (carteiraRes.error) throw carteiraRes.error
       if (ativosRes.error) throw ativosRes.error
       if (operacoesRes.error) throw operacoesRes.error
 
-      const todasOperacoes = operacoesRes.data || []
-
-      // 1. Consolida o saldo atual de cada ticker
-      const saldos = todasOperacoes.reduce((acc, op) => {
-        const qtd = parseFloat(op.quantidade)
-        if (!acc[op.ticker]) acc[op.ticker] = 0
-        acc[op.ticker] += op.operacao === 'COMPRA' ? qtd : -qtd
-        return acc
-      }, {})
-
-      // 2. Filtra o array de operações apenas para os ativos que ainda estão na carteira (saldo > 0)
-      // O Math.round resolve o problema de sobras fracionadas como 0.00001
-      const operacoesAtivas = todasOperacoes.filter(op => {
-        const saldoArredondado = Math.round(saldos[op.ticker] * 1000) / 1000
-        return saldoArredondado > 0
-      })
-
-      setCarteira(carteiraRes.data || [])
+      setCarteiraBruta(carteiraRes.data || [])
       setAtivosBase(ativosRes.data || [])
-      
-      // 3. Passa apenas as operações validadas para o state
-      setOperacoes(operacoesAtivas)
+      setTodasOperacoesBrutas(operacoesRes.data || [])
     } catch (err) {
       setErro('Erro ao carregar dados: ' + err.message)
     } finally {
       setLoading(false)
     }
   }
+
+  // Atualiza operações e carteira com base no filtro de corretora
+  useEffect(() => {
+    const ops = corretoraSelecionada === 'todas'
+      ? todasOperacoesBrutas
+      : todasOperacoesBrutas.filter(op => String(op.corretora_id) === String(corretoraSelecionada))
+
+    // 1. Consolida o saldo atual de cada ticker
+    const saldos = ops.reduce((acc, op) => {
+      const qtd = parseFloat(op.quantidade)
+      if (!acc[op.ticker]) acc[op.ticker] = 0
+      acc[op.ticker] += op.operacao === 'COMPRA' ? qtd : -qtd
+      return acc
+    }, {})
+
+    // 2. Filtra operações dos ativos ativos
+    const operacoesAtivas = ops.filter(op => {
+      const saldoArredondado = Math.round((saldos[op.ticker] || 0) * 1000) / 1000
+      return saldoArredondado > 0
+    })
+
+    // 3. Filtra itens da carteira que têm saldo nesta corretora (ou todos se consolidado)
+    let cart = carteiraBruta
+    if (corretoraSelecionada !== 'todas') {
+      const tickersAtivos = Object.keys(saldos).filter(t => (Math.round(saldos[t] * 1000) / 1000) > 0)
+      cart = carteiraBruta.filter(c => tickersAtivos.includes(c.ticker))
+    }
+
+    setCarteira(cart)
+    setOperacoes(operacoesAtivas)
+    setResultado(null)
+  }, [todasOperacoesBrutas, carteiraBruta, corretoraSelecionada])
 
 const handleCalcular = async () => {
     const valor = parseFloat(String(valorAporte).replace(',', '.'))
@@ -143,6 +163,22 @@ const handleCalcular = async () => {
       <main className="max-w-6xl mx-auto px-4 py-6">
         <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
           <div className="flex items-end gap-4 flex-wrap">
+            <div className="min-w-[200px]">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Corretora para aporte
+              </label>
+              <select
+                value={corretoraSelecionada}
+                onChange={(e) => setCorretoraSelecionada(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 bg-white font-medium text-gray-700"
+              >
+                <option value="todas">🏢 Todas as corretoras (Consolidado)</option>
+                {corretoras.map(c => (
+                  <option key={c.id} value={c.id}>{c.nome}</option>
+                ))}
+              </select>
+            </div>
+
             <div className="flex-1 min-w-[200px]">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Valor do aporte (R$)
@@ -166,13 +202,40 @@ const handleCalcular = async () => {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-4 text-sm text-gray-500">
-            <span><strong>{carteira.length}</strong> ativos na carteira</span>
+            <span><strong>{carteira.length}</strong> ativos considerados</span>
             <span>•</span>
             <span><strong>{ativosBase.filter(a => a.preco > 0).length}</strong> com cotação</span>
             <span>•</span>
-            <span><strong>{operacoes.length}</strong> operações no histórico</span>
+            <span><strong>{operacoes.length}</strong> operações {corretoraSelecionada !== 'todas' ? `na ${corretoraAtiva?.nome}` : 'totais'}</span>
           </div>
         </div>
+
+        {/* Banner se filtrado por corretora */}
+        {corretoraSelecionada !== 'todas' && (
+          <div
+            className="mb-6 p-4 rounded-xl border flex items-center justify-between flex-wrap gap-2 shadow-sm"
+            style={{
+              backgroundColor: `${corretoraAtiva?.cor || '#15803d'}12`,
+              borderColor: `${corretoraAtiva?.cor || '#15803d'}40`,
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <span
+                className="w-3.5 h-3.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: corretoraAtiva?.cor || '#15803d' }}
+              />
+              <p className="text-sm font-bold text-gray-800">
+                Calculando Smart Aporte para a corretora: <span className="underline">{corretoraAtiva?.nome}</span>
+              </p>
+            </div>
+            <button
+              onClick={() => setCorretoraSelecionada('todas')}
+              className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg shadow-sm"
+            >
+              ← Calcular para Todas as Corretoras
+            </button>
+          </div>
+        )}
 
         {erro && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-start gap-3">

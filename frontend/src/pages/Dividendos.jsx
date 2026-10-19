@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '../contexts/AuthContext'
+import { useCorretora } from '../contexts/CorretoraContext'
 import { supabase } from '../lib/supabase'
 import Header from '../components/Header'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
-  DollarSign, Calendar, TrendingUp, RefreshCw, Search,
+  DollarSign, Calendar, TrendingUp, RefreshCw, Search, Building2,
 } from 'lucide-react'
 import { formatBRL, formatData } from '../utils/formatters'
 import { useToast, useConfirm } from '../contexts/ToastContext'
@@ -15,6 +16,13 @@ export default function Dividendos() {
   const { user } = useAuth()
   const { toast } = useToast()
   const { confirm } = useConfirm()
+  const {
+    corretoras,
+    corretoraSelecionada,
+    setCorretoraSelecionada,
+    corretoraAtiva,
+  } = useCorretora()
+
   const [dividendos, setDividendos] = useState([])
   const [loading, setLoading] = useState(true)
   const [atualizando, setAtualizando] = useState(false)
@@ -37,7 +45,7 @@ export default function Dividendos() {
     setLoading(true)
     const { data, error } = await supabase
       .from('dividendos')
-      .select('*')
+      .select('*, corretoras(id, nome, cor)')
       .eq('user_id', user.id)
       .order('data_pagamento', { ascending: false })
 
@@ -86,7 +94,6 @@ export default function Dividendos() {
     }
   }
 
-
   // Anos disponíveis para filtro
   const anosDisponiveis = useMemo(() => {
     const anos = new Set()
@@ -103,6 +110,10 @@ export default function Dividendos() {
       const anoD = d.ano ? String(d.ano) : (d.data_pagamento?.slice(0, 4) || '')
       if (filtroAno !== 'todos' && anoD !== filtroAno) return false
 
+      if (corretoraSelecionada !== 'todas' && String(d.corretora_id) !== String(corretoraSelecionada)) {
+        return false
+      }
+
       const tipoD = String(d.tipo_provento || '').toUpperCase()
       if (filtroTipo === 'RENDIMENTO' && !tipoD.includes('REND')) return false
       if (filtroTipo === 'JUROS' && !tipoD.includes('JURO') && !tipoD.includes('JCP')) return false
@@ -112,33 +123,39 @@ export default function Dividendos() {
       }
       return true
     })
-  }, [dividendos, filtroAno, filtroTipo, filtroTicker])
+  }, [dividendos, filtroAno, filtroTipo, filtroTicker, corretoraSelecionada])
+
+  // Dividendos da corretora selecionada (para os cards de resumo)
+  const dividendosDaCorretora = useMemo(() => {
+    if (corretoraSelecionada === 'todas') return dividendos
+    return dividendos.filter(d => String(d.corretora_id) === String(corretoraSelecionada))
+  }, [dividendos, corretoraSelecionada])
 
   // Totais
   const totalGeral = useMemo(
-    () => dividendos.reduce((s, d) => s + Number(d.valor || 0), 0),
-    [dividendos]
+    () => dividendosDaCorretora.reduce((s, d) => s + Number(d.valor || 0), 0),
+    [dividendosDaCorretora]
   )
   const totalAnoVigente = useMemo(() => {
     const anoAtual = new Date().getFullYear().toString()
-    return dividendos
+    return dividendosDaCorretora
       .filter(d => {
         const anoD = d.ano ? String(d.ano) : (d.data_pagamento?.slice(0, 4) || '')
         return anoD === anoAtual
       })
       .reduce((s, d) => s + Number(d.valor || 0), 0)
-  }, [dividendos])
+  }, [dividendosDaCorretora])
   const totalFiltrado = useMemo(
     () => dividendosFiltrados.reduce((s, d) => s + Number(d.valor || 0), 0),
     [dividendosFiltrados]
   )
 
-  // Média mensal do ano vigente (só meses com pelo menos 1 dividendo)
+  // Média mensal do ano vigente (só meses com pelo menos 1 dividendo na corretora selecionada)
   const mediaMensalAno = useMemo(() => {
     const anoAtual = new Date().getFullYear().toString()
     const meses = new Set()
     let soma = 0
-    dividendos.forEach(d => {
+    dividendosDaCorretora.forEach(d => {
       const anoD = d.ano ? String(d.ano) : (d.data_pagamento?.slice(0, 4) || '')
       if (anoD === anoAtual && d.data_pagamento) {
         meses.add(d.data_pagamento.slice(0, 7))
@@ -146,7 +163,7 @@ export default function Dividendos() {
       }
     })
     return meses.size > 0 ? soma / meses.size : 0
-  }, [dividendos])
+  }, [dividendosDaCorretora])
 
   // Agregação mensal para o gráfico (respeitando filtros)
   const dadosGrafico = useMemo(() => {
@@ -179,25 +196,61 @@ export default function Dividendos() {
   // Reset paginação ao mudar filtros
   useEffect(() => {
     setPaginaAtual(1)
-  }, [filtroAno, filtroTipo, filtroTicker])
+  }, [filtroAno, filtroTipo, filtroTicker, corretoraSelecionada])
 
   return (
     <div className="min-h-screen bg-gray-50">
       <Header
         titulo="Dividendos"
-        subtitulo="Proventos recebidos com base na sua custódia"
+        subtitulo={
+          corretoraSelecionada === 'todas'
+            ? 'Histórico consolidado de proventos recebidos'
+            : `Proventos recebidos na corretora: ${corretoraAtiva?.nome || 'Corretora Selecionada'}`
+        }
       />
 
       <main className="max-w-7xl mx-auto px-4 py-6">
+
+        {/* Banner se filtrado por corretora */}
+        {corretoraSelecionada !== 'todas' && (
+          <div
+            className="mb-6 p-4 rounded-xl border flex items-center justify-between flex-wrap gap-2 shadow-sm"
+            style={{
+              backgroundColor: `${corretoraAtiva?.cor || '#15803d'}12`,
+              borderColor: `${corretoraAtiva?.cor || '#15803d'}40`,
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <span
+                className="w-3.5 h-3.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: corretoraAtiva?.cor || '#15803d' }}
+              />
+              <p className="text-sm font-bold text-gray-800">
+                Visualizando proventos da corretora: <span className="underline">{corretoraAtiva?.nome}</span>
+              </p>
+            </div>
+            <button
+              onClick={() => setCorretoraSelecionada('todas')}
+              className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg shadow-sm"
+            >
+              ← Ver Todas as Corretoras
+            </button>
+          </div>
+        )}
+
         {/* 3 cards de resumo */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-xl shadow-sm border p-6">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-500 text-sm font-medium">Total Recebido</span>
+              <span className="text-gray-500 text-sm font-medium">
+                {corretoraSelecionada === 'todas' ? 'Total Recebido' : `Recebido (${corretoraAtiva?.nome})`}
+              </span>
               <DollarSign className="text-green-600" size={20} />
             </div>
             <p className="text-2xl font-bold text-gray-800">{formatBRL(totalGeral)}</p>
-            <p className="text-xs text-gray-500 mt-1">{dividendos.length} provento(s) no total</p>
+            <p className="text-xs text-gray-500 mt-1">
+              {dividendosDaCorretora.length} provento(s) {corretoraSelecionada !== 'todas' ? `na ${corretoraAtiva?.nome}` : 'no total'}
+            </p>
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border p-6">
@@ -224,6 +277,18 @@ export default function Dividendos() {
         {/* Filtros + botão Atualizar */}
         <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap items-center gap-3">
           <div className="flex flex-wrap gap-3 items-center flex-1">
+            <Building2 size={18} className="text-green-700" />
+            <select
+              value={corretoraSelecionada}
+              onChange={(e) => setCorretoraSelecionada(e.target.value)}
+              className="px-3 py-1.5 border rounded-lg text-sm bg-white font-medium text-gray-700"
+            >
+              <option value="todas">🏢 Todas as corretoras</option>
+              {corretoras.map(c => (
+                <option key={c.id} value={c.id}>{c.nome}</option>
+              ))}
+            </select>
+
             <select
               value={filtroAno}
               onChange={(e) => setFiltroAno(e.target.value)}
@@ -286,7 +351,10 @@ export default function Dividendos() {
         {/* Gráfico de barras Recharts */}
         {dadosGrafico.length > 0 && (
           <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">Dividendos por mês</h3>
+            <h3 className="text-lg font-semibold text-gray-800 mb-4">
+              Dividendos por mês
+              {corretoraSelecionada !== 'todas' && ` — ${corretoraAtiva?.nome}`}
+            </h3>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={dadosGrafico} margin={{ top: 10, right: 20, left: 10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
@@ -313,7 +381,7 @@ export default function Dividendos() {
         {/* Tabela de dividendos com paginação */}
         <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
           {loading ? (
-            <div className="p-8 text-center text-gray-500">Carregando...</div>
+            <div className="p-8 text-center text-gray-500">Carregando proventos...</div>
           ) : dividendosFiltrados.length === 0 ? (
             <div className="p-12 text-center">
               <DollarSign className="mx-auto text-gray-300 mb-3" size={48} />
@@ -337,6 +405,7 @@ export default function Dividendos() {
                       <th className="py-2 px-3 text-right">Qtde</th>
                       <th className="py-2 px-3 text-right">Valor Unit.</th>
                       <th className="py-2 px-3 text-right">Valor Total</th>
+                      <th className="py-2 px-3">Corretora</th>
                       <th className="py-2 px-3">Fonte</th>
                     </tr>
                   </thead>
@@ -367,6 +436,21 @@ export default function Dividendos() {
                           <td className="py-2 px-3 text-right font-medium text-green-700">
                             {formatBRL(d.valor)}
                           </td>
+                          <td className="py-2 px-3">
+                            {d.corretoras ? (
+                              <span
+                                className="px-2 py-0.5 rounded text-xs font-medium"
+                                style={{
+                                  backgroundColor: `${d.corretoras.cor || '#10b981'}20`,
+                                  color: d.corretoras.cor || '#10b981',
+                                }}
+                              >
+                                {d.corretoras.nome}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 text-xs">-</span>
+                            )}
+                          </td>
                           <td className="py-2 px-3 text-xs text-gray-500">
                             {d.fonte || '-'}
                           </td>
@@ -382,7 +466,7 @@ export default function Dividendos() {
                       <td className="py-3 px-3 text-right font-bold text-green-700 text-base">
                         {formatBRL(dividendosPagina.reduce((s, d) => s + Number(d.valor || 0), 0))}
                       </td>
-                      <td></td>
+                      <td colSpan="2"></td>
                     </tr>
                   </tfoot>
                 </table>

@@ -11,22 +11,35 @@ import {
 import { formatBRL, formatData } from '../utils/formatters'
 import { useToast } from '../contexts/ToastContext'
 import { useConfirm } from '../contexts/ToastContext'
+import { useCorretora } from '../contexts/CorretoraContext'
 
 export default function Aportes() {
   const { user } = useAuth()
   const { toast } = useToast()
   const { confirm } = useConfirm()
+  const {
+    corretoras,
+    corretoraSelecionada,
+    setCorretoraSelecionada,
+    corretoraAtiva,
+  } = useCorretora()
 
   const [aportes, setAportes] = useState([])
-
-  const [corretoras, setCorretoras] = useState([])
   const [loading, setLoading] = useState(true)
   const [criandoNovo, setCriandoNovo] = useState(false)
   const [editandoId, setEditandoId] = useState(null)
 
   // Filtros
   const [filtroAno, setFiltroAno] = useState('todos')
-  const [filtroCorretora, setFiltroCorretora] = useState('todas')
+
+  const getCorretoraPadraoForm = () => {
+    if (corretoraSelecionada && corretoraSelecionada !== 'todas') {
+      return corretoraSelecionada
+    }
+    return corretoras.length > 0
+      ? String(corretoras.find(c => c.nome === 'Inter')?.id || corretoras[0].id)
+      : ''
+  }
 
   // Formulário
   const [form, setForm] = useState({
@@ -38,17 +51,9 @@ export default function Aportes() {
 
   useEffect(() => {
     if (user) {
-      carregarCorretoras()
       carregarAportes()
     }
   }, [user])
-
-  const carregarCorretoras = async () => {
-    const { data } = await supabase
-      .from('corretoras').select('id, nome, cor')
-      .eq('user_id', user.id).order('nome')
-    setCorretoras(data || [])
-  }
 
   const carregarAportes = async () => {
     setLoading(true)
@@ -66,9 +71,7 @@ export default function Aportes() {
       data: new Date().toISOString().split('T')[0],
       valor: '',
       descricao: '',
-      corretora_id: corretoras.length > 0
-        ? String(corretoras.find(c => c.nome === 'Inter')?.id || corretoras[0].id)
-        : '',
+      corretora_id: getCorretoraPadraoForm(),
     })
     setEditandoId(null)
     setCriandoNovo(false)
@@ -81,9 +84,7 @@ export default function Aportes() {
       data: new Date().toISOString().split('T')[0],
       valor: '',
       descricao: '',
-      corretora_id: corretoras.length > 0
-        ? String(corretoras.find(c => c.nome === 'Inter')?.id || corretoras[0].id)
-        : '',
+      corretora_id: getCorretoraPadraoForm(),
     })
   }
 
@@ -159,28 +160,33 @@ export default function Aportes() {
   const aportesFiltrados = useMemo(() => {
     return aportes.filter(a => {
       if (filtroAno !== 'todos' && a.data?.split('-')[0] !== filtroAno) return false
-      if (filtroCorretora !== 'todas' && String(a.corretora_id) !== String(filtroCorretora)) return false
+      if (corretoraSelecionada !== 'todas' && String(a.corretora_id) !== String(corretoraSelecionada)) return false
       return true
     })
-  }, [aportes, filtroAno, filtroCorretora])
+  }, [aportes, filtroAno, corretoraSelecionada])
 
-  // Totais
+  // Totais (considerando a corretora selecionada, se houver)
+  const aportesDaCorretora = useMemo(() => {
+    if (corretoraSelecionada === 'todas') return aportes
+    return aportes.filter(a => String(a.corretora_id) === String(corretoraSelecionada))
+  }, [aportes, corretoraSelecionada])
+
   const totalGeral = useMemo(
-    () => aportes.reduce((s, a) => s + Number(a.valor || 0), 0),
-    [aportes]
+    () => aportesDaCorretora.reduce((s, a) => s + Number(a.valor || 0), 0),
+    [aportesDaCorretora]
   )
   const totalAnoVigente = useMemo(() => {
     const anoAtual = new Date().getFullYear().toString()
-    return aportes
+    return aportesDaCorretora
       .filter(a => a.data?.startsWith(anoAtual))
       .reduce((s, a) => s + Number(a.valor || 0), 0)
-  }, [aportes])
+  }, [aportesDaCorretora])
   const totalMesVigente = useMemo(() => {
     const mesAtual = new Date().toISOString().slice(0, 7) // YYYY-MM
-    return aportes
+    return aportesDaCorretora
       .filter(a => a.data?.startsWith(mesAtual))
       .reduce((s, a) => s + Number(a.valor || 0), 0)
-  }, [aportes])
+  }, [aportesDaCorretora])
   const totalFiltrado = useMemo(
     () => aportesFiltrados.reduce((s, a) => s + Number(a.valor || 0), 0),
     [aportesFiltrados]
@@ -211,19 +217,55 @@ export default function Aportes() {
     <div className="min-h-screen bg-gray-50">
       <Header
         titulo="Aportes"
-        subtitulo="Histórico e adição de aportes"
+        subtitulo={
+          corretoraSelecionada === 'todas'
+            ? 'Histórico consolidado e adição de aportes'
+            : `Aportes na corretora: ${corretoraAtiva?.nome || 'Corretora Selecionada'}`
+        }
       />
 
       <main className="max-w-7xl mx-auto px-4 py-6">
+
+        {/* Banner se filtrado por corretora */}
+        {corretoraSelecionada !== 'todas' && (
+          <div
+            className="mb-6 p-4 rounded-xl border flex items-center justify-between flex-wrap gap-2 shadow-sm"
+            style={{
+              backgroundColor: `${corretoraAtiva?.cor || '#15803d'}12`,
+              borderColor: `${corretoraAtiva?.cor || '#15803d'}40`,
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <span
+                className="w-3.5 h-3.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: corretoraAtiva?.cor || '#15803d' }}
+              />
+              <p className="text-sm font-bold text-gray-800">
+                Visualizando aportes da corretora: <span className="underline">{corretoraAtiva?.nome}</span>
+              </p>
+            </div>
+            <button
+              onClick={() => setCorretoraSelecionada('todas')}
+              className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg shadow-sm"
+            >
+              ← Ver Todas as Corretoras
+            </button>
+          </div>
+        )}
+
         {/* 3 cards de resumo */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
           <div className="bg-white rounded-xl shadow-sm border p-6">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-gray-500 text-sm font-medium">Total Aportado</span>
+              <span className="text-gray-500 text-sm font-medium">
+                {corretoraSelecionada === 'todas' ? 'Total Aportado' : `Aportado (${corretoraAtiva?.nome})`}
+              </span>
               <Wallet className="text-blue-600" size={20} />
             </div>
             <p className="text-2xl font-bold text-gray-800">{formatBRL(totalGeral)}</p>
-            <p className="text-xs text-gray-500 mt-1">{aportes.length} aporte(s) no total</p>
+            <p className="text-xs text-gray-500 mt-1">
+              {aportesDaCorretora.length} aporte(s) {corretoraSelecionada !== 'todas' ? `na ${corretoraAtiva?.nome}` : 'no total'}
+            </p>
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border p-6">
@@ -251,6 +293,17 @@ export default function Aportes() {
         <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap items-center gap-3">
           <div className="flex flex-wrap gap-3 items-center flex-1">
             <select
+              value={corretoraSelecionada}
+              onChange={(e) => setCorretoraSelecionada(e.target.value)}
+              className="px-3 py-1.5 border rounded-lg text-sm bg-white font-medium text-gray-700"
+            >
+              <option value="todas">🏢 Todas as corretoras</option>
+              {corretoras.map(c => (
+                <option key={c.id} value={c.id}>{c.nome}</option>
+              ))}
+            </select>
+
+            <select
               value={filtroAno}
               onChange={(e) => setFiltroAno(e.target.value)}
               className="px-3 py-1.5 border rounded-lg text-sm bg-white"
@@ -258,17 +311,6 @@ export default function Aportes() {
               <option value="todos">Todos os anos</option>
               {anosDisponiveis.map(ano => (
                 <option key={ano} value={ano}>{ano}</option>
-              ))}
-            </select>
-
-            <select
-              value={filtroCorretora}
-              onChange={(e) => setFiltroCorretora(e.target.value)}
-              className="px-3 py-1.5 border rounded-lg text-sm bg-white"
-            >
-              <option value="todas">Todas as corretoras</option>
-              {corretoras.map(c => (
-                <option key={c.id} value={c.id}>{c.nome}</option>
               ))}
             </select>
 

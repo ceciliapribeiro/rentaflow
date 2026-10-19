@@ -14,12 +14,14 @@ const CORES_PADRAO = [
 
 import { formatBRL, formatData } from '../utils/formatters'
 import { useToast, useConfirm } from '../contexts/ToastContext'
+import { useCorretora } from '../contexts/CorretoraContext'
 
 export default function Corretoras() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const { toast } = useToast()
   const { confirm } = useConfirm()
+  const { recarregarCorretoras } = useCorretora()
 
   const [loading, setLoading] = useState(true)
   const [corretoras, setCorretoras] = useState([])
@@ -178,6 +180,7 @@ export default function Corretoras() {
       })
       if (error) throw error
       await carregar()
+      recarregarCorretoras()
       limparForm()
     } catch (err) {
       setErro('Erro ao salvar: ' + err.message)
@@ -203,6 +206,7 @@ export default function Corretoras() {
       }).eq('id', editandoId)
       if (error) throw error
       await carregar()
+      recarregarCorretoras()
       limparForm()
     } catch (err) {
       setErro('Erro ao atualizar: ' + err.message)
@@ -232,6 +236,7 @@ export default function Corretoras() {
       const { error } = await supabase.from('corretoras').delete().eq('id', c.id)
       if (error) throw error
       await carregar()
+      recarregarCorretoras()
     } catch (err) {
       setErro('Erro ao deletar: ' + err.message)
     }

@@ -4,6 +4,7 @@ import {
   Home, TrendingUp, Wallet, DollarSign, BarChart3, Building2,
   LogOut, Upload,
 } from 'lucide-react'
+import FiltroCorretora from './FiltroCorretora'
 
 const NAV_ITEMS = [
   { path: '/dashboard',  label: 'Dashboard',  icon: Home },
@@ -41,6 +42,7 @@ export default function Header({ titulo, subtitulo, mostrarImportar = false }) {
         </div>
 
         <div className="flex items-center gap-3">
+          <FiltroCorretora modo="header" />
           {mostrarImportar && (
             <button
               onClick={() => navigate('/importar')}

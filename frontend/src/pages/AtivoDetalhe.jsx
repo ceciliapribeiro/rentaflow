@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useCorretora } from '../contexts/CorretoraContext'
 import { supabase } from '../lib/supabase'
 import {
   ArrowLeft, TrendingUp, TrendingDown, DollarSign,
   Wallet, Activity, Building2, AlertTriangle, Calendar,
-  ArrowUpRight, ArrowDownRight, BarChart3,
+  ArrowUpRight, ArrowDownRight, BarChart3, Layers,
 } from 'lucide-react'
 import { formatBRL, formatData } from '../utils/formatters'
 
@@ -13,15 +14,21 @@ export default function AtivoDetalhe() {
   const { user } = useAuth()
   const { ticker } = useParams()
   const navigate = useNavigate()
+  const {
+    corretoras,
+    corretoraSelecionada,
+    setCorretoraSelecionada,
+    corretoraAtiva,
+  } = useCorretora()
 
   const [loading, setLoading] = useState(true)
   const [erro, setErro] = useState(null)
   const [aba, setAba] = useState('operacoes')
 
   const [ativoInfo, setAtivoInfo] = useState(null)
-  const [operacoes, setOperacoes] = useState([])
-  const [dividendos, setDividendos] = useState([])
-  const [resumo, setResumo] = useState({
+  const [todasOperacoes, setTodasOperacoes] = useState([])
+  const [todosDividendos, setTodosDividendos] = useState([])
+  const [resumoConsolidado, setResumoConsolidado] = useState({
     qtde: 0,
     custoTotal: 0,
     precoMedio: 0,
@@ -60,7 +67,7 @@ export default function AtivoDetalhe() {
         .order('data', { ascending: true })
 
       if (errOps) throw errOps
-      setOperacoes(ops || [])
+      setTodasOperacoes(ops || [])
 
       // 3. Dividendos
       const { data: divs } = await supabase
@@ -70,9 +77,9 @@ export default function AtivoDetalhe() {
         .eq('ticker', tickerUp)
         .order('data_pagamento', { ascending: false })
 
-      setDividendos(divs || [])
+      setTodosDividendos(divs || [])
 
-      // 4. Calcula resumo
+      // 4. Calcula resumo consolidado e distribuição por corretora
       let qtde = 0
       let custoTotal = 0
       const corretorasMap = new Map()
@@ -81,11 +88,11 @@ export default function AtivoDetalhe() {
         const q = Number(op.quantidade) || 0
         const p = Number(op.preco_unitario) || 0
         const tipoOp = (op.operacao || '').toUpperCase()
-        const corrId = op.corretora_id || 'sem_corretora'
+        const corrId = op.corretora_id ? String(op.corretora_id) : 'sem_corretora'
 
         if (!corretorasMap.has(corrId)) {
           corretorasMap.set(corrId, {
-            corretora: op.corretoras,
+            corretora: op.corretoras || (op.corretora_id ? { id: op.corretora_id, nome: `Corretora #${op.corretora_id}` } : { id: 'sem_corretora', nome: 'Sem corretora' }),
             qtde: 0,
             custo: 0,
           })
@@ -127,7 +134,7 @@ export default function AtivoDetalhe() {
         ? (totalDividendos / custoTotal) * 100
         : 0
 
-      setResumo({
+      setResumoConsolidado({
         qtde,
         custoTotal,
         precoMedio,
@@ -140,15 +147,27 @@ export default function AtivoDetalhe() {
 
       // 5. Distribuição por corretora
       const distrib = []
-      for (const [, dados] of corretorasMap.entries()) {
-        if (dados.qtde > 0.01) {
+      for (const [id, dados] of corretorasMap.entries()) {
+        if (dados.qtde > 0.001) {
           const pm = dados.qtde > 0 ? dados.custo / dados.qtde : 0
+          const divsCorr = (divs || [])
+            .filter(d => (id === 'sem_corretora' ? !d.corretora_id : String(d.corretora_id) === id))
+            .reduce((s, d) => s + Number(d.valor || 0), 0)
+
+          const vm = dados.qtde * precoAtual
+          const rentR = vm - dados.custo
+
           distrib.push({
+            id,
             corretora: dados.corretora,
             qtde: dados.qtde,
             custo: dados.custo,
             preco_medio: pm,
-            valor_mercado: dados.qtde * precoAtual,
+            valor_mercado: vm,
+            rentabilidade: dados.custo > 0 ? (rentR / dados.custo) * 100 : 0,
+            rentabilidadeReais: rentR,
+            totalDividendos: divsCorr,
+            yieldOnCost: dados.custo > 0 ? (divsCorr / dados.custo) * 100 : 0,
           })
         }
       }
@@ -160,6 +179,48 @@ export default function AtivoDetalhe() {
       setLoading(false)
     }
   }
+
+  const ehConsolidado = corretoraSelecionada === 'todas'
+
+  // Dados calculados para a corretora selecionada (ou consolidados)
+  const resumoAtivo = useMemo(() => {
+    if (ehConsolidado) return resumoConsolidado
+    const item = porCorretora.find(p => String(p.id) === String(corretoraSelecionada))
+    if (!item) {
+      return {
+        qtde: 0,
+        custoTotal: 0,
+        precoMedio: 0,
+        valorMercado: 0,
+        rentabilidade: 0,
+        rentabilidadeReais: 0,
+        totalDividendos: 0,
+        yieldOnCost: 0,
+      }
+    }
+    return {
+      qtde: item.qtde,
+      custoTotal: item.custo,
+      precoMedio: item.preco_medio,
+      valorMercado: item.valor_mercado,
+      rentabilidade: item.rentabilidade,
+      rentabilidadeReais: item.rentabilidadeReais,
+      totalDividendos: item.totalDividendos,
+      yieldOnCost: item.yieldOnCost,
+    }
+  }, [ehConsolidado, corretoraSelecionada, resumoConsolidado, porCorretora])
+
+  // Operações filtradas
+  const operacoesFiltradas = useMemo(() => {
+    if (ehConsolidado) return todasOperacoes
+    return todasOperacoes.filter(op => String(op.corretora_id) === String(corretoraSelecionada))
+  }, [ehConsolidado, corretoraSelecionada, todasOperacoes])
+
+  // Dividendos filtrados
+  const dividendosFiltrados = useMemo(() => {
+    if (ehConsolidado) return todosDividendos
+    return todosDividendos.filter(d => String(d.corretora_id) === String(corretoraSelecionada))
+  }, [ehConsolidado, corretoraSelecionada, todosDividendos])
 
   if (loading) {
     return (
@@ -176,7 +237,7 @@ export default function AtivoDetalhe() {
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-green-800 text-white">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4 flex-wrap">
           <button
             onClick={() => navigate(-1)}
             className="p-2 hover:bg-green-700 rounded-lg"
@@ -206,6 +267,80 @@ export default function AtivoDetalhe() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 py-6">
+
+        {/* BARRA DE FILTRO POR CORRETORA */}
+        <div className="bg-white border rounded-xl p-3 mb-6 shadow-sm flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <Building2 size={18} className="text-green-700 flex-shrink-0" />
+            <span className="text-sm font-semibold text-gray-700">Ver custódia por Corretora:</span>
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <button
+              onClick={() => setCorretoraSelecionada('todas')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                ehConsolidado
+                  ? 'bg-green-700 text-white shadow-sm ring-2 ring-green-600/30'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <Layers size={13} />
+              <span>Consolidado (Todas)</span>
+            </button>
+
+            {porCorretora.map(p => {
+              const ativo = String(corretoraSelecionada) === String(p.id)
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => setCorretoraSelecionada(String(p.id))}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                    ativo
+                      ? 'bg-gray-900 text-white shadow-sm ring-2 ring-gray-800/30 font-semibold'
+                      : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <span
+                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                    style={{ backgroundColor: p.corretora?.cor || '#10b981' }}
+                  />
+                  <span>{p.corretora?.nome}</span>
+                  <span className={`text-[10px] px-1 rounded ${ativo ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600'}`}>
+                    {p.qtde} cotas
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* BANNER SE FILTRADO */}
+        {!ehConsolidado && (
+          <div
+            className="mb-6 p-4 rounded-xl border flex items-center justify-between flex-wrap gap-2 shadow-sm"
+            style={{
+              backgroundColor: `${corretoraAtiva?.cor || '#15803d'}12`,
+              borderColor: `${corretoraAtiva?.cor || '#15803d'}40`,
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <span
+                className="w-3.5 h-3.5 rounded-full flex-shrink-0"
+                style={{ backgroundColor: corretoraAtiva?.cor || '#15803d' }}
+              />
+              <p className="text-sm font-bold text-gray-800">
+                Visualizando posição e operações de {ticker} na corretora: <span className="underline">{corretoraAtiva?.nome}</span>
+              </p>
+            </div>
+            <button
+              onClick={() => setCorretoraSelecionada('todas')}
+              className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg shadow-sm"
+            >
+              ← Ver Consolidado de Todas as Corretoras
+            </button>
+          </div>
+        )}
+
         {erro && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-start gap-3">
             <AlertTriangle className="text-red-500 flex-shrink-0" size={20} />
@@ -213,19 +348,34 @@ export default function AtivoDetalhe() {
           </div>
         )}
 
-        {resumo.qtde === 0 ? (
+        {resumoAtivo.qtde === 0 ? (
           <div className="bg-white border rounded-xl p-12 text-center">
             <BarChart3 size={48} className="mx-auto text-gray-300 mb-3" />
-            <p className="text-gray-700 font-semibold mb-2">Sem posição em {ticker}</p>
-            <p className="text-gray-500 text-sm mb-4">
-              Você não tem cotas/ações deste ativo atualmente.
+            <p className="text-gray-700 font-semibold mb-2">
+              {ehConsolidado
+                ? `Sem posição em ${ticker}`
+                : `Sem posição em ${ticker} na corretora ${corretoraAtiva?.nome}`}
             </p>
-            <button
-              onClick={() => navigate('/operacoes')}
-              className="px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-600"
-            >
-              Lançar operação
-            </button>
+            <p className="text-gray-500 text-sm mb-4">
+              {ehConsolidado
+                ? 'Você não possui cotas deste ativo em carteira.'
+                : 'Você não possui cotas deste ativo nesta corretora.'}
+            </p>
+            {!ehConsolidado ? (
+              <button
+                onClick={() => setCorretoraSelecionada('todas')}
+                className="px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-600 text-sm font-medium"
+              >
+                Ver Posição Consolidada
+              </button>
+            ) : (
+              <button
+                onClick={() => navigate('/operacoes')}
+                className="px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-600 text-sm font-medium"
+              >
+                Lançar operação
+              </button>
+            )}
           </div>
         ) : (
           <>
@@ -233,10 +383,12 @@ export default function AtivoDetalhe() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="bg-white border rounded-xl p-4">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-gray-500">Quantidade</span>
+                  <span className="text-xs text-gray-500">
+                    {ehConsolidado ? 'Quantidade Total' : `Qtde (${corretoraAtiva?.nome})`}
+                  </span>
                   <Wallet size={16} className="text-green-600" />
                 </div>
-                <p className="text-2xl font-bold">{resumo.qtde}</p>
+                <p className="text-2xl font-bold">{resumoAtivo.qtde}</p>
                 <p className="text-xs text-gray-400 mt-1">cotas/ações</p>
               </div>
 
@@ -245,9 +397,9 @@ export default function AtivoDetalhe() {
                   <span className="text-xs text-gray-500">Preço médio</span>
                   <Activity size={16} className="text-blue-600" />
                 </div>
-                <p className="text-2xl font-bold">{formatBRL(resumo.precoMedio)}</p>
+                <p className="text-2xl font-bold">{formatBRL(resumoAtivo.precoMedio)}</p>
                 <p className="text-xs text-gray-400 mt-1">
-                  Custo total: {formatBRL(resumo.custoTotal)}
+                  Custo total: {formatBRL(resumoAtivo.custoTotal)}
                 </p>
               </div>
 
@@ -256,23 +408,23 @@ export default function AtivoDetalhe() {
                   <span className="text-xs text-gray-500">Valor de mercado</span>
                   <TrendingUp size={16} className="text-purple-600" />
                 </div>
-                <p className="text-2xl font-bold">{formatBRL(resumo.valorMercado)}</p>
+                <p className="text-2xl font-bold">{formatBRL(resumoAtivo.valorMercado)}</p>
                 <div className={`flex items-center gap-1 text-xs mt-1 ${
-                  resumo.rentabilidade >= 0 ? 'text-green-600' : 'text-red-600'
+                  resumoAtivo.rentabilidade >= 0 ? 'text-green-600' : 'text-red-600'
                 }`}>
-                  {resumo.rentabilidade >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
-                  {resumo.rentabilidade.toFixed(2)}%
+                  {resumoAtivo.rentabilidade >= 0 ? <ArrowUpRight size={12} /> : <ArrowDownRight size={12} />}
+                  {resumoAtivo.rentabilidade.toFixed(2)}%
                 </div>
               </div>
 
               <div className="bg-white border rounded-xl p-4">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs text-gray-500">Dividendos</span>
+                  <span className="text-xs text-gray-500">Dividendos recebidos</span>
                   <DollarSign size={16} className="text-emerald-600" />
                 </div>
-                <p className="text-2xl font-bold">{formatBRL(resumo.totalDividendos)}</p>
+                <p className="text-2xl font-bold">{formatBRL(resumoAtivo.totalDividendos)}</p>
                 <p className="text-xs text-gray-400 mt-1">
-                  YoC: {resumo.yieldOnCost.toFixed(2)}%
+                  YoC: {resumoAtivo.yieldOnCost.toFixed(2)}%
                 </p>
               </div>
             </div>
@@ -294,11 +446,11 @@ export default function AtivoDetalhe() {
                     </div>
                   )}
                   <div>
-                    <p className="text-xs text-blue-700 mb-1">Rentabilidade total</p>
+                    <p className="text-xs text-blue-700 mb-1">Rentabilidade (R$)</p>
                     <p className={`text-xl font-bold ${
-                      resumo.rentabilidadeReais >= 0 ? 'text-green-700' : 'text-red-700'
+                      resumoAtivo.rentabilidadeReais >= 0 ? 'text-green-700' : 'text-red-700'
                     }`}>
-                      {formatBRL(resumo.rentabilidadeReais)}
+                      {formatBRL(resumoAtivo.rentabilidadeReais)}
                     </p>
                   </div>
                 </div>
@@ -306,21 +458,31 @@ export default function AtivoDetalhe() {
             )}
 
             {/* Distribuição por corretora */}
-            {porCorretora.length > 1 && (
-              <div className="bg-white border rounded-xl p-4 mb-6">
-                <h3 className="font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                  <Building2 size={18} /> Distribuição por corretora
+            {ehConsolidado && porCorretora.length > 1 && (
+              <div className="bg-white border rounded-xl p-4 mb-6 shadow-sm">
+                <h3 className="font-semibold text-gray-700 mb-3 flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <Building2 size={18} className="text-green-700" />
+                    Distribuição deste ativo por corretora
+                  </span>
+                  <span className="text-xs text-gray-400">Clique na corretora para filtrar</span>
                 </h3>
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {porCorretora.map((p, i) => {
-                    const pct = resumo.qtde > 0 ? (p.qtde / resumo.qtde) * 100 : 0
+                    const pct = resumoConsolidado.qtde > 0 ? (p.qtde / resumoConsolidado.qtde) * 100 : 0
                     return (
-                      <div key={i} className="flex items-center gap-3">
-                        <div className="w-24 flex items-center gap-2 text-sm">
-                          <div className="w-3 h-3 rounded-full" style={{
-                            backgroundColor: p.corretora?.cor || '#6b7280'
-                          }} />
-                          <span className="font-medium">{p.corretora?.nome || '—'}</span>
+                      <div
+                        key={i}
+                        onClick={() => setCorretoraSelecionada(String(p.id))}
+                        className="flex items-center gap-3 p-1.5 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors"
+                        title={`Filtrar ${ticker} na ${p.corretora?.nome}`}
+                      >
+                        <div className="w-28 flex items-center gap-2 text-sm">
+                          <div
+                            className="w-3 h-3 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: p.corretora?.cor || '#6b7280' }}
+                          />
+                          <span className="font-medium text-gray-800 truncate">{p.corretora?.nome || '—'}</span>
                         </div>
                         <div className="flex-1 bg-gray-100 rounded-full h-6 relative overflow-hidden">
                           <div
@@ -330,13 +492,13 @@ export default function AtivoDetalhe() {
                               backgroundColor: p.corretora?.cor || '#6b7280',
                             }}
                           />
-                          <div className="absolute inset-0 flex items-center justify-center text-xs font-medium">
-                            {pct.toFixed(1)}%
+                          <div className="absolute inset-0 flex items-center justify-center text-xs font-semibold">
+                            {pct.toFixed(1)}% ({p.qtde} cotas)
                           </div>
                         </div>
                         <div className="text-right text-sm w-32">
-                          <p className="font-bold">{p.qtde} cotas</p>
-                          <p className="text-xs text-gray-500">{formatBRL(p.valor_mercado)}</p>
+                          <p className="font-bold text-gray-800">{formatBRL(p.valor_mercado)}</p>
+                          <p className="text-xs text-gray-500">PM: {formatBRL(p.preco_medio)}</p>
                         </div>
                       </div>
                     )
@@ -346,73 +508,79 @@ export default function AtivoDetalhe() {
             )}
 
             {/* Tabs */}
-            <div className="bg-white border rounded-xl overflow-hidden">
+            <div className="bg-white border rounded-xl overflow-hidden shadow-sm">
               <div className="border-b flex">
                 <button
                   onClick={() => setAba('operacoes')}
                   className={`px-6 py-3 text-sm font-medium border-b-2 ${
                     aba === 'operacoes'
-                      ? 'border-green-600 text-green-700'
+                      ? 'border-green-600 text-green-700 font-bold'
                       : 'border-transparent text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  Operações ({operacoes.length})
+                  Operações ({operacoesFiltradas.length})
                 </button>
                 <button
                   onClick={() => setAba('dividendos')}
                   className={`px-6 py-3 text-sm font-medium border-b-2 ${
                     aba === 'dividendos'
-                      ? 'border-green-600 text-green-700'
+                      ? 'border-green-600 text-green-700 font-bold'
                       : 'border-transparent text-gray-500 hover:text-gray-700'
                   }`}
                 >
-                  Dividendos ({dividendos.length})
+                  Dividendos ({dividendosFiltrados.length})
                 </button>
               </div>
 
               <div className="overflow-x-auto">
                 {aba === 'operacoes' ? (
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr className="border-b text-gray-500 text-left">
-                        <th className="py-2 px-3">Data</th>
-                        <th className="py-2 px-3">Op</th>
-                        <th className="py-2 px-3 text-right">Qtde</th>
-                        <th className="py-2 px-3 text-right">Preço</th>
-                        <th className="py-2 px-3 text-right">Total</th>
-                        <th className="py-2 px-3">Corretora</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {operacoes.map(op => (
-                        <tr key={op.id} className="border-b hover:bg-gray-50">
-                          <td className="py-2 px-3">{formatData(op.data)}</td>
-                          <td className="py-2 px-3">
-                            <span className={`text-xs px-2 py-0.5 rounded flex items-center gap-1 w-fit ${
-                              op.operacao === 'COMPRA' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                            }`}>
-                              {op.operacao === 'COMPRA' ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
-                              {op.operacao}
-                            </span>
-                          </td>
-                          <td className="py-2 px-3 text-right">{op.quantidade}</td>
-                          <td className="py-2 px-3 text-right">{formatBRL(op.preco_unitario)}</td>
-                          <td className="py-2 px-3 text-right font-medium">
-                            {formatBRL(op.quantidade * op.preco_unitario)}
-                          </td>
-                          <td className="py-2 px-3">
-                            {op.corretoras ? (
-                              <span className="inline-flex items-center gap-1 text-xs">
-                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: op.corretoras.cor }} />
-                                {op.corretoras.nome}
-                              </span>
-                            ) : <span className="text-gray-400 text-xs">—</span>}
-                          </td>
+                  operacoesFiltradas.length > 0 ? (
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50">
+                        <tr className="border-b text-gray-500 text-left">
+                          <th className="py-2 px-3">Data</th>
+                          <th className="py-2 px-3">Op</th>
+                          <th className="py-2 px-3 text-right">Qtde</th>
+                          <th className="py-2 px-3 text-right">Preço</th>
+                          <th className="py-2 px-3 text-right">Total</th>
+                          <th className="py-2 px-3">Corretora</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : dividendos.length > 0 ? (
+                      </thead>
+                      <tbody>
+                        {operacoesFiltradas.map(op => (
+                          <tr key={op.id} className="border-b hover:bg-gray-50">
+                            <td className="py-2 px-3">{formatData(op.data)}</td>
+                            <td className="py-2 px-3">
+                              <span className={`text-xs px-2 py-0.5 rounded flex items-center gap-1 w-fit ${
+                                op.operacao === 'COMPRA' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                              }`}>
+                                {op.operacao === 'COMPRA' ? <TrendingUp size={10} /> : <TrendingDown size={10} />}
+                                {op.operacao}
+                              </span>
+                            </td>
+                            <td className="py-2 px-3 text-right">{op.quantidade}</td>
+                            <td className="py-2 px-3 text-right">{formatBRL(op.preco_unitario)}</td>
+                            <td className="py-2 px-3 text-right font-medium">
+                              {formatBRL(op.quantidade * op.preco_unitario)}
+                            </td>
+                            <td className="py-2 px-3">
+                              {op.corretoras ? (
+                                <span className="inline-flex items-center gap-1 text-xs">
+                                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: op.corretoras.cor }} />
+                                  {op.corretoras.nome}
+                                </span>
+                              ) : <span className="text-gray-400 text-xs">—</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : (
+                    <div className="p-8 text-center text-gray-500 text-sm">
+                      Nenhuma operação registrada nesta corretora.
+                    </div>
+                  )
+                ) : dividendosFiltrados.length > 0 ? (
                   <table className="w-full text-sm">
                     <thead className="bg-gray-50">
                       <tr className="border-b text-gray-500 text-left">
@@ -422,10 +590,11 @@ export default function AtivoDetalhe() {
                         <th className="py-2 px-3 text-right">Qtde</th>
                         <th className="py-2 px-3 text-right">Valor unit.</th>
                         <th className="py-2 px-3 text-right">Total</th>
+                        <th className="py-2 px-3">Corretora</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {dividendos.map(d => (
+                      {dividendosFiltrados.map(d => (
                         <tr key={d.id} className="border-b hover:bg-gray-50">
                           <td className="py-2 px-3">{formatData(d.data_pagamento)}</td>
                           <td className="py-2 px-3 text-gray-600">{formatData(d.data_ex)}</td>
@@ -439,13 +608,22 @@ export default function AtivoDetalhe() {
                           <td className="py-2 px-3 text-right font-bold text-green-700">
                             {formatBRL(d.valor)}
                           </td>
+                          <td className="py-2 px-3">
+                            {d.corretoras ? (
+                              <span className="inline-flex items-center gap-1 text-xs">
+                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: d.corretoras.cor }} />
+                                {d.corretoras.nome}
+                              </span>
+                            ) : <span className="text-gray-400 text-xs">—</span>}
+                          </td>
                         </tr>
                       ))}
                       <tr className="bg-gray-50 font-bold">
                         <td colSpan="5" className="py-2 px-3 text-right">Total recebido:</td>
                         <td className="py-2 px-3 text-right text-green-700">
-                          {formatBRL(resumo.totalDividendos)}
+                          {formatBRL(resumoAtivo.totalDividendos)}
                         </td>
+                        <td></td>
                       </tr>
                     </tbody>
                   </table>
