@@ -368,7 +368,7 @@ export default function Dashboard() {
 
       setStatusCotacao({
         etapa: 'sucesso',
-        mensagem: `${resultado.sucesso}/${resultado.total} atualizados | ${resultado.falhas} falhas`,
+        mensagem: `${resultado.sucesso}/${resultado.total} atualizados (${resultado.comDY ?? 0} com DY, ${resultado.comPvp ?? 0} com P/VP) | ${resultado.falhas} falhas`,
         detalhes: resultado,
       })
       await carregarDados()

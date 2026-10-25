@@ -1,7 +1,7 @@
-// Edge Function: atualizar-cotacoes (v11)
+// Edge Function: atualizar-cotacoes (v12)
 // Multi-fonte inteligente:
-// - Ações/BDRs: Brapi (preço+DY+PVP) → Yahoo fallback
-// - FIIs: Status Invest (DY+PVP) → Fundsexplorer fallback; preço sempre via Brapi/Yahoo
+// - Ações/BDRs e FIIs: Brapi, Status Invest e Fundamentus em paralelo
+// - Fallbacks cruzados para DY, P/VP e Preço (Yahoo + Fundsexplorer)
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
@@ -40,6 +40,10 @@ function ehFII(ticker: string): boolean {
   return ticker.length === 6 && ticker.endsWith('11')
 }
 
+function ehBDR(ticker: string): boolean {
+  return ticker.endsWith('34') || ticker.endsWith('35') || ticker.endsWith('39')
+}
+
 // Converte "1,23" ou "12,34%" → 1.23
 function parseNumeroBR(txt: string): number {
   if (!txt) return 0
@@ -49,12 +53,18 @@ function parseNumeroBR(txt: string): number {
 }
 
 // ───────────────────────────────────────────────────────────
-// 1) STATUS INVEST — DY e P/VP para FIIs (scraping HTML)
+// 1) STATUS INVEST — DY, P/VP e Preço (Ações, BDRs e FIIs)
 // ───────────────────────────────────────────────────────────
 async function buscarStatusInvest(ticker: string): Promise<Partial<AtivoData>> {
   const out: Partial<AtivoData> = {}
   try {
-    const url = `https://statusinvest.com.br/fundos-imobiliarios/${ticker.toLowerCase()}`
+    let endpoint = 'acoes'
+    if (ehFII(ticker)) {
+      endpoint = 'fundos-imobiliarios'
+    } else if (ehBDR(ticker)) {
+      endpoint = 'bdrs'
+    }
+    const url = `https://statusinvest.com.br/${endpoint}/${ticker.toLowerCase()}`
     const r = await fetch(url, {
       headers: {
         'User-Agent': UA,
@@ -65,6 +75,23 @@ async function buscarStatusInvest(ticker: string): Promise<Partial<AtivoData>> {
     if (!r.ok) return out
 
     const html = await r.text()
+
+    // Preço
+    const precoMatches = [
+      /title="Valor atual do ativo"[\s\S]*?<strong[^>]*class="[^"]*value[^"]*"[^>]*>([\d,\.]+)/i,
+      /class="[^"]*value[^"]*"[^>]*title="Valor atual[^"]*"[^>]*>([\d,\.]+)/i,
+    ]
+    for (const re of precoMatches) {
+      const m = html.match(re)
+      if (m && m[1]) {
+        const p = parseNumeroBR(m[1])
+        if (p > 0) {
+          out.preco = p
+          out.fontePreco = 'StatusInvest'
+          break
+        }
+      }
+    }
 
     // DY — busca por padrões "Dividend Yield" seguidos de valor
     const dyMatches = [
@@ -87,6 +114,7 @@ async function buscarStatusInvest(ticker: string): Promise<Partial<AtivoData>> {
     // P/VP — busca por padrões similares
     const pvpMatches = [
       /title="P\/VP[^"]*"[\s\S]*?<strong[^>]*class="[^"]*value[^"]*"[^>]*>([\d,\.]+)/i,
+      /title="Preço sobre o Valor Patrimonial[^"]*"[\s\S]*?<strong[^>]*class="[^"]*value[^"]*"[^>]*>([\d,\.]+)/i,
       /["']?P\/VP["']?[^<]{0,80}?(\d{1,3}[,\.]\d{1,4})/i,
       /["']?P\/VPA["']?[^<]{0,80}?(\d{1,3}[,\.]\d{1,4})/i,
     ]
@@ -94,7 +122,7 @@ async function buscarStatusInvest(ticker: string): Promise<Partial<AtivoData>> {
       const m = html.match(re)
       if (m && m[1]) {
         const pvp = parseNumeroBR(m[1])
-        if (pvp > 0 && pvp < 50) {
+        if (pvp > 0 && pvp < 100) {
           out.pvp = pvp
           out.fontePvp = 'StatusInvest'
           break
@@ -109,7 +137,67 @@ async function buscarStatusInvest(ticker: string): Promise<Partial<AtivoData>> {
 }
 
 // ───────────────────────────────────────────────────────────
-// 2) FUNDSEXPLORER — fallback para FIIs (scraping HTML)
+// 2) FUNDAMENTUS — Cotação, DY, P/VP e Razão Social (Ações e FIIs)
+// ───────────────────────────────────────────────────────────
+async function buscarFundamentus(ticker: string): Promise<Partial<AtivoData>> {
+  const out: Partial<AtivoData> = {}
+  try {
+    const url = `https://www.fundamentus.com.br/detalhes.php?papel=${ticker.toUpperCase()}`
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent': UA,
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+      },
+    })
+    if (!r.ok) return out
+
+    const html = await r.text()
+
+    // Cotação / Preço
+    const mPreco = html.match(/<span[^>]*class="txt"[^>]*>Cota[^<]*<\/span><\/td>\s*<td[^>]*class="data[^"]*"[^>]*><span[^>]*class="txt"[^>]*>([^<]+)<\/span><\/td>/i)
+    if (mPreco && mPreco[1]) {
+      const preco = parseNumeroBR(mPreco[1])
+      if (preco > 0) {
+        out.preco = preco
+        out.fontePreco = 'Fundamentus'
+      }
+    }
+
+    // P/VP
+    const mPvp = html.match(/<span[^>]*class="txt"[^>]*>P\/VP<\/span><\/td>\s*<td[^>]*class="data[^"]*"[^>]*><span[^>]*class="txt"[^>]*>([^<]+)<\/span><\/td>/i)
+    if (mPvp && mPvp[1]) {
+      const pvp = parseNumeroBR(mPvp[1])
+      if (pvp > 0 && pvp < 100) {
+        out.pvp = pvp
+        out.fontePvp = 'Fundamentus'
+      }
+    }
+
+    // Div. Yield
+    const mDy = html.match(/<span[^>]*class="txt"[^>]*>Div\.\s*Yield<\/span><\/td>\s*<td[^>]*class="data[^"]*"[^>]*><span[^>]*class="txt"[^>]*>([^<]+)<\/span><\/td>/i)
+    if (mDy && mDy[1]) {
+      const dy = parseNumeroBR(mDy[1])
+      if (dy > 0 && dy < 100) {
+        out.dy = dy
+        out.fonteDy = 'Fundamentus'
+      }
+    }
+
+    // Razão Social / Empresa
+    const mNome = html.match(/<span[^>]*class="txt"[^>]*>(?:Empresa|Fundo)<\/span><\/td>\s*<td[^>]*class="data[^"]*"[^>]*><span[^>]*class="txt"[^>]*>([^<]+)<\/span><\/td>/i)
+    if (mNome && mNome[1]) {
+      out.razao_social = mNome[1].trim()
+    }
+
+    return out
+  } catch {
+    return out
+  }
+}
+
+// ───────────────────────────────────────────────────────────
+// 3) FUNDSEXPLORER — fallback para FIIs (scraping HTML)
 // ───────────────────────────────────────────────────────────
 async function buscarFundsexplorer(ticker: string): Promise<Partial<AtivoData>> {
   const out: Partial<AtivoData> = {}
@@ -168,7 +256,7 @@ async function buscarFundsexplorer(ticker: string): Promise<Partial<AtivoData>> 
 }
 
 // ───────────────────────────────────────────────────────────
-// 3) BRAPI — preço + DY + P/VP (para ações/BDRs)
+// 4) BRAPI — preço + DY + P/VP
 // ───────────────────────────────────────────────────────────
 async function buscarBrapi(ticker: string, token: string): Promise<AtivoData> {
   const out: AtivoData = { ticker, preco: 0 }
@@ -215,7 +303,7 @@ async function buscarBrapi(ticker: string, token: string): Promise<AtivoData> {
 }
 
 // ───────────────────────────────────────────────────────────
-// 4) YAHOO FINANCE — fallback para preço
+// 5) YAHOO FINANCE — fallback para preço
 // ───────────────────────────────────────────────────────────
 async function buscarYahoo(ticker: string): Promise<Partial<AtivoData>> {
   const out: Partial<AtivoData> = {}
@@ -249,76 +337,83 @@ async function buscarYahoo(ticker: string): Promise<Partial<AtivoData>> {
 }
 
 // ───────────────────────────────────────────────────────────
-// 5) COMBINADOR INTELIGENTE — escolhe fontes por tipo
+// 6) COMBINADOR INTELIGENTE — FIIs e Ações com suporte a DY e P/VP
 // ───────────────────────────────────────────────────────────
 async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData> {
   const fii = ehFII(ticker)
+  const tipo = fii ? 'FII' : 'Acao'
 
-  if (fii) {
-    // FIIs: Brapi (preço) + Status Invest (DY/PVP) + Fundsexplorer (fallback DY/PVP)
-    const [brapi, statusInvest] = await Promise.all([
-      buscarBrapi(ticker, brapiToken),
-      buscarStatusInvest(ticker),
-    ])
+  // Consulta em paralelo: Brapi, Status Invest e Fundamentus
+  const [brapi, statusInvest, fundamentus] = await Promise.all([
+    buscarBrapi(ticker, brapiToken),
+    buscarStatusInvest(ticker),
+    buscarFundamentus(ticker),
+  ])
 
-    const out: AtivoData = {
-      ticker,
-      preco: brapi.preco,
-      razao_social: brapi.razao_social,
-      tipo: 'FII',
-      fontePreco: brapi.fontePreco,
-      dy: statusInvest.dy ?? brapi.dy,
-      pvp: statusInvest.pvp ?? brapi.pvp,
-      fonteDy: statusInvest.fonteDy ?? brapi.fonteDy,
-      fontePvp: statusInvest.fontePvp ?? brapi.fontePvp,
-    }
+  // Preço: Brapi -> Fundamentus -> StatusInvest -> Yahoo
+  let preco = brapi.preco || 0
+  let fontePreco = brapi.fontePreco
 
-    // Se preço falhou no Brapi, tenta Yahoo
-    if (!out.preco || out.preco <= 0) {
+  if (!preco || preco <= 0) {
+    if (fundamentus.preco && fundamentus.preco > 0) {
+      preco = fundamentus.preco
+      fontePreco = 'Fundamentus'
+    } else if (statusInvest.preco && statusInvest.preco > 0) {
+      preco = statusInvest.preco
+      fontePreco = 'StatusInvest'
+    } else {
       const yahoo = await buscarYahoo(ticker)
       if (yahoo.preco && yahoo.preco > 0) {
-        out.preco = yahoo.preco
-        out.fontePreco = 'Yahoo'
+        preco = yahoo.preco
+        fontePreco = 'Yahoo'
       }
-    }
-
-    // Se DY ou PVP ainda faltam, tenta Fundsexplorer como fallback
-    const precisaDy = !out.dy || out.dy <= 0
-    const precisaPvp = !out.pvp || out.pvp <= 0
-    if (precisaDy || precisaPvp) {
-      const fe = await buscarFundsexplorer(ticker)
-      if (precisaDy && fe.dy && fe.dy > 0) {
-        out.dy = fe.dy
-        out.fonteDy = 'Fundsexplorer'
-      }
-      if (precisaPvp && fe.pvp && fe.pvp > 0) {
-        out.pvp = fe.pvp
-        out.fontePvp = 'Fundsexplorer'
-      }
-    }
-
-    if (!out.preco || out.preco <= 0) out.erro = 'Sem preço'
-    return out
-  }
-
-  // Ações/BDRs: Brapi primária + Yahoo fallback (só preço)
-  const brapi = await buscarBrapi(ticker, brapiToken)
-  brapi.tipo = brapi.tipo || 'Acao'
-
-  if (!brapi.preco || brapi.preco <= 0) {
-    const yahoo = await buscarYahoo(ticker)
-    if (yahoo.preco && yahoo.preco > 0) {
-      brapi.preco = yahoo.preco
-      brapi.fontePreco = 'Yahoo'
     }
   }
 
-  if (!brapi.preco || brapi.preco <= 0) brapi.erro = brapi.erro || 'Sem preço'
-  return brapi
+  // DY: StatusInvest -> Fundamentus -> Brapi
+  let dy = statusInvest.dy || fundamentus.dy || brapi.dy
+  let fonteDy = statusInvest.dy ? statusInvest.fonteDy : (fundamentus.dy ? fundamentus.fonteDy : brapi.fonteDy)
+
+  // P/VP: StatusInvest -> Fundamentus -> Brapi
+  let pvp = statusInvest.pvp || fundamentus.pvp || brapi.pvp
+  let fontePvp = statusInvest.pvp ? statusInvest.fontePvp : (fundamentus.pvp ? fundamentus.fontePvp : brapi.fontePvp)
+
+  // Se for FII e ainda faltar DY ou PVP, tenta Fundsexplorer
+  if (fii && ((!dy || dy <= 0) || (!pvp || pvp <= 0))) {
+    const fe = await buscarFundsexplorer(ticker)
+    if ((!dy || dy <= 0) && fe.dy && fe.dy > 0) {
+      dy = fe.dy
+      fonteDy = 'Fundsexplorer'
+    }
+    if ((!pvp || pvp <= 0) && fe.pvp && fe.pvp > 0) {
+      pvp = fe.pvp
+      fontePvp = 'Fundsexplorer'
+    }
+  }
+
+  const razao_social = brapi.razao_social || fundamentus.razao_social || undefined
+
+  const out: AtivoData = {
+    ticker,
+    preco,
+    dy,
+    pvp,
+    tipo,
+    razao_social,
+    fontePreco,
+    fonteDy,
+    fontePvp,
+  }
+
+  if (!preco || preco <= 0) {
+    out.erro = brapi.erro || 'Sem preço'
+  }
+
+  return out
 }
 
 // ───────────────────────────────────────────────────────────
-// 6) Handler HTTP — processa em paralelo controlado
+// 7) Handler HTTP — processa em paralelo controlado
 // ───────────────────────────────────────────────────────────
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -351,7 +446,7 @@ serve(async (req) => {
     const tickersUp = tickers.map((t) => String(t).toUpperCase().trim())
     const resultados: AtivoData[] = []
 
-    // Paralelismo reduzido para 3 (Status Invest/Fundsexplorer fazem scraping)
+    // Paralelismo controlado para scraping
     const PARALELO = 3
     for (let i = 0; i < tickersUp.length; i += PARALELO) {
       const lote = tickersUp.slice(i, i + PARALELO)
@@ -360,9 +455,8 @@ serve(async (req) => {
       )
       resultados.push(...r)
 
-      // Sleep maior entre lotes para respeitar rate limits dos scrapers
       if (i + PARALELO < tickersUp.length) {
-        await new Promise((rs) => setTimeout(rs, 400))
+        await new Promise((rs) => setTimeout(rs, 350))
       }
     }
 
@@ -378,6 +472,7 @@ serve(async (req) => {
         if (typeof r.dy === 'number' && r.dy > 0) obj.dy = r.dy
         if (typeof r.pvp === 'number' && r.pvp > 0) obj.pvp = r.pvp
         if (r.razao_social) obj.razao_social = r.razao_social
+        if (r.tipo) obj.tipo = r.tipo
         return obj
       })
 
@@ -400,16 +495,20 @@ serve(async (req) => {
     const fontes = {
       preco: {
         brapi: resultados.filter((r) => r.fontePreco === 'Brapi').length,
+        fundamentus: resultados.filter((r) => r.fontePreco === 'Fundamentus').length,
+        statusinvest: resultados.filter((r) => r.fontePreco === 'StatusInvest').length,
         yahoo: resultados.filter((r) => r.fontePreco === 'Yahoo').length,
       },
       dy: {
-        brapi:        resultados.filter((r) => r.fonteDy === 'Brapi').length,
+        brapi: resultados.filter((r) => r.fonteDy === 'Brapi').length,
         statusinvest: resultados.filter((r) => r.fonteDy === 'StatusInvest').length,
+        fundamentus: resultados.filter((r) => r.fonteDy === 'Fundamentus').length,
         fundsexplorer: resultados.filter((r) => r.fonteDy === 'Fundsexplorer').length,
       },
       pvp: {
-        brapi:        resultados.filter((r) => r.fontePvp === 'Brapi').length,
+        brapi: resultados.filter((r) => r.fontePvp === 'Brapi').length,
         statusinvest: resultados.filter((r) => r.fontePvp === 'StatusInvest').length,
+        fundamentus: resultados.filter((r) => r.fontePvp === 'Fundamentus').length,
         fundsexplorer: resultados.filter((r) => r.fontePvp === 'Fundsexplorer').length,
       },
     }
