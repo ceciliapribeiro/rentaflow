@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase'
+import { supabase } from '../lib/supabase.js'
 
 /**
  * Adiciona dias úteis (D+2) para considerar liquidação B3
@@ -185,17 +185,32 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
         corretoraAtribuida = comCustodia[0].cId
         motivo = `Custódia positiva (${comCustodia[0].qtde}) apenas nesta corretora na data ${dataRef}`
       } else if (comCustodia.length > 1) {
-        // Mais de uma corretora com custódia: tenta conferir se d.quantidade bate
+        // Mais de uma corretora com custódia: tenta conferir se d.quantidade bate com alguma das corretoras
         const qtdeDiv = Number(d.quantidade) || 0
         const matchQtde = comCustodia.find(c => Math.abs(c.qtde - qtdeDiv) < 0.001)
         if (matchQtde) {
           corretoraAtribuida = matchQtde.cId
           motivo = `Quantidade de provento (${qtdeDiv}) bate com a custódia da corretora`
         } else {
-          // Atribui à corretora com maior custódia
-          comCustodia.sort((a, b) => b.qtde - a.qtde)
-          corretoraAtribuida = comCustodia[0].cId
-          motivo = `Maior custódia na data (${comCustodia[0].qtde})`
+          // Se o tipo_provento trouxer indicação explícita (ex: 'RENDIMENTO (Rico)')
+          const tipoStr = String(d.tipo_provento || '').toLowerCase()
+          const corrPorNome = comCustodia.find(c => {
+            const nomeCorr = mapaCorretoras.get(String(c.cId))?.nome?.toLowerCase() || ''
+            return nomeCorr && tipoStr.includes(nomeCorr)
+          })
+          if (corrPorNome) {
+            corretoraAtribuida = corrPorNome.cId
+            motivo = `Tipo do provento indica a corretora ${mapaCorretoras.get(String(corrPorNome.cId))?.nome}`
+          } else if (corrIdAtual && comCustodia.some(c => String(c.cId) === String(corrIdAtual))) {
+            // Se já está atribuído a uma das corretoras com custódia positiva, preserva
+            corretoraAtribuida = corrIdAtual
+            motivo = `Mantido na corretora atual com custódia válida na data`
+          } else {
+            // Atribui à corretora com maior custódia
+            comCustodia.sort((a, b) => b.qtde - a.qtde)
+            corretoraAtribuida = comCustodia[0].cId
+            motivo = `Maior custódia na data (${comCustodia[0].qtde})`
+          }
         }
       } else {
         // Nenhuma corretora com custódia calculada na data exata:

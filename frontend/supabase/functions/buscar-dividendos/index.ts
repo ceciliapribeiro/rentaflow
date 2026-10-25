@@ -388,6 +388,7 @@ async function processarTicker(
   inicioBusca: Date,
   hojeLimite: Date,
   defaultCorretoraId: number | null = null,
+  mapaCorretoras: Map<number, string> = new Map(),
 ): Promise<ResultadoTicker> {
   const resultado: ResultadoTicker = {
     ticker,
@@ -443,10 +444,22 @@ async function processarTicker(
       const dataPagISO = `${yyyy}-${mm}-${dd}`
       const dataExISO = `${prov.data_ex.getFullYear()}-${String(prov.data_ex.getMonth() + 1).padStart(2, '0')}-${String(prov.data_ex.getDate()).padStart(2, '0')}`
 
-      for (const item of custodias) {
+      for (let idx = 0; idx < custodias.length; idx++) {
+        const item = custodias[idx]
         const targetCorrId = item.corretoraId || defaultCorretoraId
-        const chave = `${dataPagISO}_${prov.tipo}`
-        if (chavesExistentes.has(chave)) {
+        const nomeCorretora = targetCorrId ? (mapaCorretoras.get(targetCorrId) || '') : ''
+
+        // Se houver mais de uma corretora com custódia, e este não for o primeiro item,
+        // adiciona o nome da corretora ao tipo_provento para não violar a unique constraint
+        // (user_id, ticker, data_pagamento, tipo_provento)
+        let tipoFinal = prov.tipo
+        if (custodias.length > 1 && idx > 0 && nomeCorretora) {
+          tipoFinal = `${prov.tipo} (${nomeCorretora})`
+        }
+
+        const chave = `${dataPagISO}_${prov.tipo.toUpperCase()}_${targetCorrId ? String(targetCorrId) : 'null'}`
+        const chaveFinal = `${dataPagISO}_${tipoFinal.toUpperCase()}_${targetCorrId ? String(targetCorrId) : 'null'}`
+        if (chavesExistentes.has(chave) || chavesExistentes.has(chaveFinal)) {
           resultado.duplicados += 1
           continue
         }
@@ -462,12 +475,13 @@ async function processarTicker(
           valor: valorTotal,
           valor_unitario: prov.valor_unitario,
           quantidade: item.qtde,
-          tipo_provento: prov.tipo,
+          tipo_provento: tipoFinal,
           fonte,
           corretora_id: targetCorrId,
         })
 
         chavesExistentes.add(chave)
+        chavesExistentes.add(chaveFinal)
       }
     }
 
@@ -545,7 +559,7 @@ serve(async (req) => {
     // 3) Carrega dividendos já registrados (dedup)
     const { data: divsRaw } = await supabase
       .from('dividendos')
-      .select('ticker, data_pagamento, tipo_provento')
+      .select('ticker, data_pagamento, tipo_provento, corretora_id')
       .eq('user_id', userId)
 
     const existentesPorTicker = new Map<string, Set<string>>()
@@ -555,8 +569,8 @@ serve(async (req) => {
         if (!existentesPorTicker.has(tk)) existentesPorTicker.set(tk, new Set())
         const dataISO = String(d.data_pagamento).slice(0, 10)
         const tipo = String(d.tipo_provento || 'RENDIMENTO').toUpperCase()
-        const chave = `${dataISO}_${tipo}`
-        existentesPorTicker.get(tk)!.add(chave)
+        const corr = d.corretora_id ? String(d.corretora_id) : 'null'
+        existentesPorTicker.get(tk)!.add(`${dataISO}_${tipo}_${corr}`)
       }
     }
 
@@ -566,8 +580,9 @@ serve(async (req) => {
     const inicioBusca = new Date(hojeLimite)
     inicioBusca.setDate(inicioBusca.getDate() - JANELA_DIAS)
 
-    // 4.5) Identifica a corretora padrão do usuário (Rico ou primeira cadastrada)
+    // 4.5) Identifica as corretoras do usuário e corretora padrão
     let defaultCorretoraId: number | null = null
+    const mapaCorretoras = new Map<number, string>()
     try {
       const { data: corretorasUser } = await supabase
         .from('corretoras')
@@ -575,6 +590,11 @@ serve(async (req) => {
         .eq('user_id', userId)
 
       if (corretorasUser && corretorasUser.length > 0) {
+        for (const c of corretorasUser) {
+          if (c.id && c.nome) {
+            mapaCorretoras.set(Number(c.id), String(c.nome))
+          }
+        }
         const rico = corretorasUser.find((c: any) =>
           c.nome && c.nome.toLowerCase().includes('rico')
         )
@@ -598,6 +618,7 @@ serve(async (req) => {
             existentesPorTicker,
             inicioBusca, hojeLimite,
             defaultCorretoraId,
+            mapaCorretoras,
           )
         )
       )
