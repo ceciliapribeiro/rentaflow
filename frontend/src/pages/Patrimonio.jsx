@@ -13,6 +13,7 @@ import {
 } from 'lucide-react'
 import { formatBRL } from '../utils/formatters'
 import { calcularPosicoes, inferirTipo, tickersAtivos as getTickers } from '../utils/calcularPosicoes'
+import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
 
 const CORES_TIPO = {
   FII:   '#7c3aed',
@@ -88,7 +89,15 @@ export default function Patrimonio() {
       setOperacoes(opRes.data || [])
       setAtivosBD(atRes.data || [])
       setAportes(apRes.data || [])
-      setDividendos(divRes.data || [])
+
+      const rico = corretoras.find(c => c.nome?.trim().toLowerCase() === 'rico')
+      const divs = (divRes.data || []).map(d => {
+        if (!d.corretora_id && rico) {
+          return { ...d, corretora_id: rico.id }
+        }
+        return d
+      })
+      setDividendos(divs)
     } catch (err) {
       console.error('Erro ao carregar patrimônio:', err)
     } finally {
@@ -113,8 +122,12 @@ export default function Patrimonio() {
   // Filtra dividendos conforme corretora selecionada
   const dividendosFiltrados = useMemo(() => {
     if (ehConsolidado) return dividendos
-    return dividendos.filter(d => String(d.corretora_id) === String(corretoraSelecionada))
-  }, [dividendos, corretoraSelecionada, ehConsolidado])
+    const rico = corretoras.find(c => c.nome?.trim().toLowerCase() === 'rico')
+    return dividendos.filter(d => {
+      const cId = d.corretora_id || (rico ? rico.id : null)
+      return String(cId) === String(corretoraSelecionada)
+    })
+  }, [dividendos, corretoraSelecionada, ehConsolidado, corretoras])
 
   // Posições baseadas nas operações filtradas
   const posicoes = useMemo(() => calcularPosicoes(operacoesFiltradas), [operacoesFiltradas])
@@ -294,76 +307,12 @@ export default function Patrimonio() {
       />
 
       <main className="max-w-7xl mx-auto px-4 py-6">
-
-        {/* BARRA DE FILTRO POR CORRETORA */}
-        <div className="bg-white border rounded-xl p-3 mb-6 shadow-sm flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Building2 size={18} className="text-green-700 flex-shrink-0" />
-            <span className="text-sm font-semibold text-gray-700">Filtrar por Corretora:</span>
-          </div>
-
-          <div className="flex items-center gap-1.5 flex-wrap flex-1 justify-start md:justify-end">
-            <button
-              onClick={() => setCorretoraSelecionada('todas')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                ehConsolidado
-                  ? 'bg-green-700 text-white shadow-sm ring-2 ring-green-600/30'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              <Layers size={13} />
-              <span>Todas as Corretoras</span>
-            </button>
-
-            {corretoras.map(c => {
-              const ativo = String(corretoraSelecionada) === String(c.id)
-              return (
-                <button
-                  key={c.id}
-                  onClick={() => setCorretoraSelecionada(String(c.id))}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    ativo
-                      ? 'bg-gray-900 text-white shadow-sm ring-2 ring-gray-800/30 font-semibold'
-                      : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  <span
-                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: c.cor || '#10b981' }}
-                  />
-                  <span>{c.nome}</span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* AVISO QUANDO UMA CORRETORA ESPECÍFICA ESTÁ SELECIONADA */}
-        {!ehConsolidado && (
-          <div
-            className="mb-6 p-4 rounded-xl border flex items-center justify-between flex-wrap gap-2 shadow-sm"
-            style={{
-              backgroundColor: `${corretoraAtiva?.cor || '#15803d'}12`,
-              borderColor: `${corretoraAtiva?.cor || '#15803d'}40`,
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <span
-                className="w-3.5 h-3.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: corretoraAtiva?.cor || '#15803d' }}
-              />
-              <p className="text-sm font-bold text-gray-800">
-                Visualizando métricas patrimoniais de: <span className="underline">{corretoraAtiva?.nome}</span>
-              </p>
-            </div>
-            <button
-              onClick={() => setCorretoraSelecionada('todas')}
-              className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg shadow-sm"
-            >
-              ← Ver Consolidado Geral
-            </button>
-          </div>
-        )}
+        {/* BARRA DE FILTRO POR CORRETORA (PILLS + BANNER) */}
+        <BarraFiltroCorretora
+          titulo="Filtrar por Corretora:"
+          descricaoBanner="métricas patrimoniais"
+          labelConsolidado="Todas as Corretoras"
+        />
 
         {/* Cards de métricas */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

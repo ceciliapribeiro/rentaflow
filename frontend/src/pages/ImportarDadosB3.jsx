@@ -7,6 +7,7 @@ import {
   AlertCircle, ArrowLeft, BarChart3
 } from 'lucide-react'
 import { processarDadosB3 } from '../utils/importarDadosB3'
+import Header from '../components/Header'
 
 export default function ImportarDadosB3() {
   const navigate = useNavigate()
@@ -113,19 +114,12 @@ export default function ImportarDadosB3() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-green-800 text-white">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4">
-          <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-green-700 rounded-lg">
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h1 className="text-xl font-bold">Importar Catálogo de Ativos B3</h1>
-            <p className="text-green-200 text-sm">Importa a aba "Dados B3" da planilha mestre</p>
-          </div>
-        </div>
-      </header>
+      <Header
+        titulo="Importar Catálogo B3"
+        subtitulo="Atualize os dados e cotações de ativos a partir da planilha Dados B3"
+      />
 
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="max-w-7xl mx-auto px-4 py-8">
         {!arquivo && !resultado && (
           <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
             <div className="flex items-start gap-4">

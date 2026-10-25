@@ -379,6 +379,7 @@ async function processarTicker(
   existentesPorTicker: Map<string, Set<string>>,
   inicioBusca: Date,
   hojeLimite: Date,
+  corretoraId: number | null = null,
 ): Promise<ResultadoTicker> {
   const resultado: ResultadoTicker = {
     ticker,
@@ -441,6 +442,7 @@ async function processarTicker(
         quantidade: qtde,
         tipo_provento: prov.tipo,
         fonte,
+        corretora_id: corretoraId,
       })
 
       chavesExistentes.add(chave)
@@ -540,6 +542,24 @@ serve(async (req) => {
     const inicioBusca = new Date(hojeLimite)
     inicioBusca.setDate(inicioBusca.getDate() - JANELA_DIAS)
 
+    // 4.5) Identifica a corretora padrão do usuário (Rico ou primeira cadastrada)
+    let defaultCorretoraId: number | null = null
+    try {
+      const { data: corretorasUser } = await supabase
+        .from('corretoras')
+        .select('id, nome')
+        .eq('user_id', userId)
+
+      if (corretorasUser && corretorasUser.length > 0) {
+        const rico = corretorasUser.find((c: any) =>
+          c.nome && c.nome.toLowerCase().includes('rico')
+        )
+        defaultCorretoraId = rico ? rico.id : corretorasUser[0].id
+      }
+    } catch {
+      /* segue com null se houver falha */
+    }
+
     // 5) Processa tickers em paralelo (3 de cada vez)
     const resultados: ResultadoTicker[] = []
     const PARALELO = 3
@@ -553,6 +573,7 @@ serve(async (req) => {
             historico.get(t)!,
             existentesPorTicker,
             inicioBusca, hojeLimite,
+            defaultCorretoraId,
           )
         )
       )

@@ -8,6 +8,8 @@ import {
 import { calcularSmartAporte } from '../utils/smartAporte'
 import { formatBRL } from '../utils/formatters'
 import { useCorretora } from '../contexts/CorretoraContext'
+import Header from '../components/Header'
+import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
 
 export default function SmartAporte() {
   const navigate = useNavigate()
@@ -146,39 +148,25 @@ const handleCalcular = async () => {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-green-800 text-white">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4">
-          <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-green-700 rounded-lg">
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h1 className="text-xl font-bold">Smart Aporte</h1>
-            <p className="text-green-200 text-sm">
-              Boleta de compra inteligente baseada em DY, P/VP e rebalanceamento
-            </p>
-          </div>
-        </div>
-      </header>
+      <Header
+        titulo="Smart Aporte"
+        subtitulo={
+          corretoraSelecionada === 'todas'
+            ? 'Boleta de compra inteligente baseada em DY, P/VP e rebalanceamento consolidado'
+            : `Boleta inteligente para a carteira na corretora: ${corretoraAtiva?.nome || 'Corretora Selecionada'}`
+        }
+      />
 
-      <main className="max-w-6xl mx-auto px-4 py-6">
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {/* BARRA DE FILTRO POR CORRETORA (PILLS + BANNER) */}
+        <BarraFiltroCorretora
+          titulo="Filtrar por Corretora:"
+          descricaoBanner="ativos e operações para o Smart Aporte"
+          labelConsolidado="Todas as Corretoras"
+        />
+
         <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
           <div className="flex items-end gap-4 flex-wrap">
-            <div className="min-w-[200px]">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Corretora para aporte
-              </label>
-              <select
-                value={corretoraSelecionada}
-                onChange={(e) => setCorretoraSelecionada(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 bg-white font-medium text-gray-700"
-              >
-                <option value="todas">🏢 Todas as corretoras (Consolidado)</option>
-                {corretoras.map(c => (
-                  <option key={c.id} value={c.id}>{c.nome}</option>
-                ))}
-              </select>
-            </div>
-
             <div className="flex-1 min-w-[200px]">
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Valor do aporte (R$)
@@ -188,13 +176,13 @@ const handleCalcular = async () => {
                 value={valorAporte}
                 onChange={(e) => setValorAporte(e.target.value)}
                 placeholder="1000.00"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 text-base font-semibold text-gray-800"
               />
             </div>
             <button
               onClick={handleCalcular}
               disabled={calculando || ativosBase.length === 0}
-              className="px-6 py-2 bg-green-700 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center gap-2"
+              className="px-6 py-2.5 bg-green-700 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center gap-2 font-medium shadow-sm transition-all"
             >
               <Calculator size={18} />
               {calculando ? 'Calculando...' : 'Calcular boleta'}
@@ -209,33 +197,6 @@ const handleCalcular = async () => {
             <span><strong>{operacoes.length}</strong> operações {corretoraSelecionada !== 'todas' ? `na ${corretoraAtiva?.nome}` : 'totais'}</span>
           </div>
         </div>
-
-        {/* Banner se filtrado por corretora */}
-        {corretoraSelecionada !== 'todas' && (
-          <div
-            className="mb-6 p-4 rounded-xl border flex items-center justify-between flex-wrap gap-2 shadow-sm"
-            style={{
-              backgroundColor: `${corretoraAtiva?.cor || '#15803d'}12`,
-              borderColor: `${corretoraAtiva?.cor || '#15803d'}40`,
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <span
-                className="w-3.5 h-3.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: corretoraAtiva?.cor || '#15803d' }}
-              />
-              <p className="text-sm font-bold text-gray-800">
-                Calculando Smart Aporte para a corretora: <span className="underline">{corretoraAtiva?.nome}</span>
-              </p>
-            </div>
-            <button
-              onClick={() => setCorretoraSelecionada('todas')}
-              className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg shadow-sm"
-            >
-              ← Calcular para Todas as Corretoras
-            </button>
-          </div>
-        )}
 
         {erro && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-start gap-3">

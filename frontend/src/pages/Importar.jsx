@@ -8,6 +8,7 @@ import {
   processarOperacoes, processarAportes, processarDividendos,
 } from '../utils/importarUtils'
 import ImportarPreview from './ImportarPreview'
+import Header from '../components/Header'
 
 export default function Importar() {
   const { user } = useAuth()
@@ -212,19 +213,12 @@ export default function Importar() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-green-800 text-white">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4">
-          <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-green-700 rounded-lg">
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h1 className="text-xl font-bold">Importar Carteira</h1>
-            <p className="text-green-200 text-sm">Processa as abas APORTES, DIVIDENDOS e OPERACOES</p>
-          </div>
-        </div>
-      </header>
+      <Header
+        titulo="Importar Carteira"
+        subtitulo="Processa as abas APORTES, DIVIDENDOS e OPERACOES via planilha Excel"
+      />
 
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main className="max-w-7xl mx-auto px-4 py-8">
         {!preview && !resultado && (
           <>
             <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">

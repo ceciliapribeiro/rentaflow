@@ -14,6 +14,7 @@ import {
 import { formatBRL } from '../utils/formatters'
 import { calcularPosicoes, tickersAtivos as getTickers } from '../utils/calcularPosicoes'
 import { useToast } from '../contexts/ToastContext'
+import { sincronizarDividendosRico } from '../utils/sincronizarDividendosRico'
 
 export default function Dashboard() {
   const { user } = useAuth()
@@ -105,6 +106,11 @@ export default function Dashboard() {
         .eq('user_id', user.id)
       setTodosDividendos(divsRows || [])
 
+      // Sincroniza dividendos sem corretora para a corretora Rico
+      if (corretoras && corretoras.length > 0) {
+        sincronizarDividendosRico(user.id, corretoras).catch(console.warn)
+      }
+
     } catch (err) {
       console.error('Erro ao carregar dados do dashboard:', err)
     } finally {
@@ -173,9 +179,14 @@ export default function Dashboard() {
       if (mapa[k]) mapa[k].aportes += Number(ap.valor || 0)
     })
 
-    // Agrupa dividendos
+    // Agrupa dividendos (com fallback para a corretora Rico se estiver sem vínculo)
+    const rico = corretoras.find(c => c.nome?.trim().toLowerCase() === 'rico')
     todosDividendos.forEach(d => {
-      const k = d.corretora_id ? d.corretora_id : 'sem_corretora'
+      let corrId = d.corretora_id
+      if (!corrId && rico) {
+        corrId = rico.id
+      }
+      const k = corrId ? corrId : 'sem_corretora'
       if (mapa[k]) mapa[k].dividendos += Number(d.valor || 0)
     })
 

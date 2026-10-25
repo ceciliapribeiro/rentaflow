@@ -12,6 +12,7 @@ import { formatBRL, formatData } from '../utils/formatters'
 import { useToast } from '../contexts/ToastContext'
 import { useConfirm } from '../contexts/ToastContext'
 import { useCorretora } from '../contexts/CorretoraContext'
+import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
 
 export default function Aportes() {
   const { user } = useAuth()
@@ -225,33 +226,20 @@ export default function Aportes() {
       />
 
       <main className="max-w-7xl mx-auto px-4 py-6">
-
-        {/* Banner se filtrado por corretora */}
-        {corretoraSelecionada !== 'todas' && (
-          <div
-            className="mb-6 p-4 rounded-xl border flex items-center justify-between flex-wrap gap-2 shadow-sm"
-            style={{
-              backgroundColor: `${corretoraAtiva?.cor || '#15803d'}12`,
-              borderColor: `${corretoraAtiva?.cor || '#15803d'}40`,
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <span
-                className="w-3.5 h-3.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: corretoraAtiva?.cor || '#15803d' }}
-              />
-              <p className="text-sm font-bold text-gray-800">
-                Visualizando aportes da corretora: <span className="underline">{corretoraAtiva?.nome}</span>
-              </p>
-            </div>
+        {/* BARRA DE FILTRO DE CORRETORA (PILLS + BANNER) */}
+        <BarraFiltroCorretora
+          titulo="Filtrar por Corretora:"
+          descricaoBanner="aportes"
+          labelConsolidado="Todas as Corretoras"
+          extraAcoes={
             <button
-              onClick={() => setCorretoraSelecionada('todas')}
-              className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg shadow-sm"
+              onClick={iniciarNovo}
+              className="flex items-center gap-2 bg-green-700 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm transition-all ml-auto sm:ml-2"
             >
-              ← Ver Todas as Corretoras
+              <Plus size={14} /> Novo aporte
             </button>
-          </div>
-        )}
+          }
+        />
 
         {/* 3 cards de resumo */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
@@ -289,24 +277,13 @@ export default function Aportes() {
           </div>
         </div>
 
-        {/* Filtros + botão Novo aporte */}
-        <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap items-center gap-3">
-          <div className="flex flex-wrap gap-3 items-center flex-1">
-            <select
-              value={corretoraSelecionada}
-              onChange={(e) => setCorretoraSelecionada(e.target.value)}
-              className="px-3 py-1.5 border rounded-lg text-sm bg-white font-medium text-gray-700"
-            >
-              <option value="todas">🏢 Todas as corretoras</option>
-              {corretoras.map(c => (
-                <option key={c.id} value={c.id}>{c.nome}</option>
-              ))}
-            </select>
-
+        {/* Filtro secundário de Ano */}
+        <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
             <select
               value={filtroAno}
               onChange={(e) => setFiltroAno(e.target.value)}
-              className="px-3 py-1.5 border rounded-lg text-sm bg-white"
+              className="px-3 py-1.5 border rounded-lg text-sm bg-white font-medium"
             >
               <option value="todos">Todos os anos</option>
               {anosDisponiveis.map(ano => (
@@ -318,13 +295,6 @@ export default function Aportes() {
               Total filtrado: <strong className="text-gray-800">{formatBRL(totalFiltrado)}</strong>
             </span>
           </div>
-
-          <button
-            onClick={iniciarNovo}
-            className="flex items-center gap-2 bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium"
-          >
-            <Plus size={16} /> Novo aporte
-          </button>
         </div>
 
         {/* Gráfico de barras Recharts */}

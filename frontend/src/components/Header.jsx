@@ -2,20 +2,21 @@ import { useAuth } from '../contexts/AuthContext'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Home, TrendingUp, Wallet, DollarSign, BarChart3, Building2,
-  LogOut, Upload,
+  LogOut, Upload, Calculator,
 } from 'lucide-react'
 import FiltroCorretora from './FiltroCorretora'
 
 const NAV_ITEMS = [
-  { path: '/dashboard',  label: 'Dashboard',  icon: Home },
-  { path: '/operacoes',  label: 'Operações',  icon: TrendingUp },
-  { path: '/aportes',    label: 'Aportes',    icon: Wallet },
-  { path: '/dividendos', label: 'Dividendos', icon: DollarSign },
-  { path: '/patrimonio', label: 'Patrimônio', icon: BarChart3 },
-  { path: '/corretoras', label: 'Corretoras', icon: Building2 },
+  { path: '/dashboard',    label: 'Dashboard',    icon: Home },
+  { path: '/operacoes',    label: 'Operações',    icon: TrendingUp },
+  { path: '/aportes',      label: 'Aportes',      icon: Wallet },
+  { path: '/dividendos',   label: 'Dividendos',   icon: DollarSign },
+  { path: '/patrimonio',   label: 'Patrimônio',   icon: BarChart3 },
+  { path: '/smart-aporte', label: 'Smart Aporte', icon: Calculator },
+  { path: '/corretoras',   label: 'Corretoras',   icon: Building2 },
 ]
 
-export default function Header({ titulo, subtitulo, mostrarImportar = false }) {
+export default function Header({ titulo, subtitulo, mostrarImportar = true, acoes = null }) {
   const { user, signOut } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
@@ -25,7 +26,10 @@ export default function Header({ titulo, subtitulo, mostrarImportar = false }) {
     navigate('/login')
   }
 
-  const isAtivo = (path) => location.pathname === path
+  const isAtivo = (path) => {
+    if (path === '/dashboard') return location.pathname === '/' || location.pathname === '/dashboard'
+    return location.pathname.startsWith(path)
+  }
 
   return (
     <header className="bg-green-800 text-white shadow-lg">
@@ -82,10 +86,13 @@ export default function Header({ titulo, subtitulo, mostrarImportar = false }) {
       </nav>
 
       {/* Título e subtítulo da página atual */}
-      {(titulo || subtitulo) && (
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          {titulo && <h2 className="text-2xl font-bold">{titulo}</h2>}
-          {subtitulo && <p className="text-green-200 text-sm mt-1">{subtitulo}</p>}
+      {(titulo || subtitulo || acoes) && (
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between flex-wrap gap-4">
+          <div>
+            {titulo && <h2 className="text-2xl font-bold">{titulo}</h2>}
+            {subtitulo && <p className="text-green-200 text-sm mt-1">{subtitulo}</p>}
+          </div>
+          {acoes && <div className="flex items-center gap-2">{acoes}</div>}
         </div>
       )}
     </header>

@@ -9,6 +9,7 @@ import {
   ArrowUpRight, ArrowDownRight, BarChart3, Layers,
 } from 'lucide-react'
 import { formatBRL, formatData } from '../utils/formatters'
+import Header from '../components/Header'
 
 export default function AtivoDetalhe() {
   const { user } = useAuth()
@@ -77,7 +78,19 @@ export default function AtivoDetalhe() {
         .eq('ticker', tickerUp)
         .order('data_pagamento', { ascending: false })
 
-      setTodosDividendos(divs || [])
+      // Identifica corretora Rico para fallback em dividendos sem vínculo
+      let rico = corretoras.find(c => c.nome?.trim().toLowerCase() === 'rico')
+      const divsNormalizados = (divs || []).map(d => {
+        if (!d.corretora_id && rico) {
+          return {
+            ...d,
+            corretora_id: rico.id,
+            corretoras: d.corretoras || { id: rico.id, nome: rico.nome, cor: rico.cor || '#ff7a00' },
+          }
+        }
+        return d
+      })
+      setTodosDividendos(divsNormalizados)
 
       // 4. Calcula resumo consolidado e distribuição por corretora
       let qtde = 0
@@ -150,7 +163,7 @@ export default function AtivoDetalhe() {
       for (const [id, dados] of corretorasMap.entries()) {
         if (dados.qtde > 0.001) {
           const pm = dados.qtde > 0 ? dados.custo / dados.qtde : 0
-          const divsCorr = (divs || [])
+          const divsCorr = divsNormalizados
             .filter(d => (id === 'sem_corretora' ? !d.corretora_id : String(d.corretora_id) === id))
             .reduce((s, d) => s + Number(d.valor || 0), 0)
 
@@ -236,35 +249,30 @@ export default function AtivoDetalhe() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-green-800 text-white">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4 flex-wrap">
-          <button
-            onClick={() => navigate(-1)}
-            className="p-2 hover:bg-green-700 rounded-lg"
-          >
-            <ArrowLeft size={20} />
-          </button>
-          <div className="flex-1">
-            <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold">{ticker.toUpperCase()}</h1>
-              <span className={`text-xs px-2 py-0.5 rounded ${
-                tipo === 'FII' ? 'bg-purple-200 text-purple-800' :
-                tipo === 'BDR' ? 'bg-orange-200 text-orange-800' :
-                'bg-blue-200 text-blue-800'
-              }`}>{tipo}</span>
-            </div>
-            {ativoInfo?.razao_social && (
-              <p className="text-green-200 text-sm">{ativoInfo.razao_social}</p>
+      <Header
+        titulo={`${ticker.toUpperCase()} • ${tipo}`}
+        subtitulo={
+          ativoInfo?.razao_social
+            ? `${ativoInfo.razao_social} ${!ehConsolidado ? `(Custódia na ${corretoraAtiva?.nome})` : '(Consolidado)'}`
+            : !ehConsolidado ? `Custódia na ${corretoraAtiva?.nome}` : 'Posição consolidada'
+        }
+        acoes={
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => navigate(-1)}
+              className="px-3 py-1.5 bg-green-700 hover:bg-green-600 rounded-lg text-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all"
+            >
+              <ArrowLeft size={14} /> Voltar
+            </button>
+            {precoAtual > 0 && (
+              <div className="text-right">
+                <p className="text-[11px] text-green-200">Preço atual</p>
+                <p className="text-xl font-bold text-white">{formatBRL(precoAtual)}</p>
+              </div>
             )}
           </div>
-          {precoAtual > 0 && (
-            <div className="text-right">
-              <p className="text-xs text-green-200">Preço atual</p>
-              <p className="text-2xl font-bold">{formatBRL(precoAtual)}</p>
-            </div>
-          )}
-        </div>
-      </header>
+        }
+      />
 
       <main className="max-w-6xl mx-auto px-4 py-6">
 

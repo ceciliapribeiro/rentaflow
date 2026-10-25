@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from './AuthContext'
+import { sincronizarDividendosRico } from '../utils/sincronizarDividendosRico'
 
 const CorretoraContext = createContext({})
 
@@ -42,7 +43,13 @@ export function CorretoraProvider({ children }) {
         .eq('user_id', user.id)
         .order('nome')
       if (error) throw error
-      setCorretoras(data || [])
+      const lista = data || []
+      setCorretoras(lista)
+
+      // Garante que dividendos órfãos (sem corretora) sejam vinculados à Rico no Supabase
+      sincronizarDividendosRico(user.id, lista).catch(err => {
+        console.warn('Erro ao auto-vincular dividendos à Rico:', err)
+      })
     } catch (err) {
       console.error('Erro ao carregar corretoras no contexto:', err)
       setCorretoras([])

@@ -8,6 +8,8 @@ import {
 import { formatBRL, formatData } from '../utils/formatters'
 import { useToast, useConfirm } from '../contexts/ToastContext'
 import { useCorretora } from '../contexts/CorretoraContext'
+import Header from '../components/Header'
+import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
 
 export default function Operacoes() {
   const { user } = useAuth()
@@ -186,57 +188,30 @@ export default function Operacoes() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-green-800 text-white">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center gap-4 flex-wrap">
-          <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-green-700 rounded-lg">
-            <ArrowLeft size={20} />
-          </button>
-          <div className="flex-1">
-            <h1 className="text-xl font-bold">Operações</h1>
-            <p className="text-green-200 text-sm">
-              {corretoraSelecionada === 'todas'
-                ? 'Compras e vendas de todas as corretoras'
-                : `Operações filtradas: ${corretoraAtiva?.nome || 'Corretora Selecionada'}`}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={iniciarNova}
-              className="flex items-center gap-2 bg-white text-green-800 px-4 py-2 rounded-lg hover:bg-green-50 font-medium text-sm shadow-sm"
-            >
-              <Plus size={16} /> Adicionar operação
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {/* Banner se filtrado por corretora */}
-        {corretoraSelecionada !== 'todas' && (
-          <div
-            className="mb-6 p-4 rounded-xl border flex items-center justify-between flex-wrap gap-2 shadow-sm"
-            style={{
-              backgroundColor: `${corretoraAtiva?.cor || '#15803d'}12`,
-              borderColor: `${corretoraAtiva?.cor || '#15803d'}40`,
-            }}
+      <Header
+        titulo="Operações"
+        subtitulo={
+          corretoraSelecionada === 'todas'
+            ? 'Histórico consolidado de compras e vendas'
+            : `Operações filtradas: ${corretoraAtiva?.nome || 'Corretora Selecionada'}`
+        }
+        acoes={
+          <button
+            onClick={iniciarNova}
+            className="flex items-center gap-2 bg-white text-green-800 px-4 py-2 rounded-lg hover:bg-green-50 font-medium text-sm shadow-sm transition-all"
           >
-            <div className="flex items-center gap-3">
-              <span
-                className="w-3.5 h-3.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: corretoraAtiva?.cor || '#15803d' }}
-              />
-              <p className="text-sm font-bold text-gray-800">
-                Visualizando operações da corretora: <span className="underline">{corretoraAtiva?.nome}</span>
-              </p>
-            </div>
-            <button
-              onClick={() => setCorretoraSelecionada('todas')}
-              className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg shadow-sm"
-            >
-              ← Ver Todas as Corretoras
-            </button>
-          </div>
-        )}
+            <Plus size={16} /> Adicionar operação
+          </button>
+        }
+      />
+
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {/* BARRA DE FILTRO POR CORRETORA (PILLS + BANNER) */}
+        <BarraFiltroCorretora
+          titulo="Filtrar por Corretora:"
+          descricaoBanner="operações"
+          labelConsolidado="Todas as Corretoras"
+        />
 
         {/* Cards de resumo */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
@@ -256,20 +231,8 @@ export default function Operacoes() {
           </div>
         </div>
 
-        {/* Filtros */}
+        {/* Filtros secundários: Tipo e Ticker */}
         <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap gap-3 items-center">
-          <Building2 size={18} className="text-green-700" />
-          <select
-            value={corretoraSelecionada}
-            onChange={(e) => setCorretoraSelecionada(e.target.value)}
-            className="px-3 py-1.5 border rounded-lg text-sm bg-white font-medium text-gray-700"
-          >
-            <option value="todas">🏢 Todas as corretoras</option>
-            {corretoras.map(c => (
-              <option key={c.id} value={c.id}>{c.nome}</option>
-            ))}
-          </select>
-
           <select
             value={filtroTipo}
             onChange={(e) => setFiltroTipo(e.target.value)}

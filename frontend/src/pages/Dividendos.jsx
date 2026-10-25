@@ -11,6 +11,8 @@ import {
 } from 'lucide-react'
 import { formatBRL, formatData } from '../utils/formatters'
 import { useToast, useConfirm } from '../contexts/ToastContext'
+import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
+import { sincronizarDividendosRico } from '../utils/sincronizarDividendosRico'
 
 export default function Dividendos() {
   const { user } = useAuth()
@@ -39,7 +41,7 @@ export default function Dividendos() {
 
   useEffect(() => {
     if (user) carregarDividendos()
-  }, [user])
+  }, [user, corretoras.length])
 
   const carregarDividendos = async () => {
     setLoading(true)
@@ -53,7 +55,31 @@ export default function Dividendos() {
       console.error('Erro ao carregar dividendos:', error)
       setDividendos([])
     } else {
-      setDividendos(data || [])
+      // Localiza a corretora Rico para atribuir dividendos que possam estar sem vínculo
+      let listaCorrs = corretoras
+      if (!listaCorrs || listaCorrs.length === 0) {
+        try {
+          const { data: cData } = await supabase.from('corretoras').select('*').eq('user_id', user.id)
+          if (cData) listaCorrs = cData
+        } catch {
+          listaCorrs = []
+        }
+      }
+      const rico = listaCorrs.find(c => c.nome?.trim().toLowerCase() === 'rico')
+      const dadosNormalizados = (data || []).map(d => {
+        if (!d.corretora_id && rico) {
+          return {
+            ...d,
+            corretora_id: rico.id,
+            corretoras: d.corretoras || { id: rico.id, nome: rico.nome, cor: rico.cor || '#ff7a00' },
+          }
+        }
+        return d
+      })
+      setDividendos(dadosNormalizados)
+
+      // Garante que o banco Supabase seja atualizado se houver registros sem corretora
+      sincronizarDividendosRico(user.id, listaCorrs).catch(console.warn)
     }
     setLoading(false)
   }
@@ -211,32 +237,23 @@ export default function Dividendos() {
 
       <main className="max-w-7xl mx-auto px-4 py-6">
 
-        {/* Banner se filtrado por corretora */}
-        {corretoraSelecionada !== 'todas' && (
-          <div
-            className="mb-6 p-4 rounded-xl border flex items-center justify-between flex-wrap gap-2 shadow-sm"
-            style={{
-              backgroundColor: `${corretoraAtiva?.cor || '#15803d'}12`,
-              borderColor: `${corretoraAtiva?.cor || '#15803d'}40`,
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <span
-                className="w-3.5 h-3.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: corretoraAtiva?.cor || '#15803d' }}
-              />
-              <p className="text-sm font-bold text-gray-800">
-                Visualizando proventos da corretora: <span className="underline">{corretoraAtiva?.nome}</span>
-              </p>
-            </div>
+        {/* BARRA DE FILTRO DE CORRETORA (PILLS + BANNER) */}
+        <BarraFiltroCorretora
+          titulo="Filtrar por Corretora:"
+          descricaoBanner="proventos"
+          labelConsolidado="Todas as Corretoras"
+          extraAcoes={
             <button
-              onClick={() => setCorretoraSelecionada('todas')}
-              className="px-3 py-1.5 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-lg shadow-sm"
+              onClick={atualizarDividendos}
+              disabled={atualizando}
+              className="flex items-center gap-2 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm transition-all ml-auto sm:ml-2"
+              title="Buscar proventos dos últimos 365 dias via API"
             >
-              ← Ver Todas as Corretoras
+              <RefreshCw size={13} className={atualizando ? 'animate-spin' : ''} />
+              {atualizando ? 'Buscando...' : 'Atualizar proventos'}
             </button>
-          </div>
-        )}
+          }
+        />
 
         {/* 3 cards de resumo */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
@@ -274,21 +291,9 @@ export default function Dividendos() {
           </div>
         </div>
 
-        {/* Filtros + botão Atualizar */}
-        <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap items-center gap-3">
+        {/* Filtros secundários: Ano, Tipo, Ticker */}
+        <div className="bg-white rounded-xl shadow-sm border p-4 mb-6 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap gap-3 items-center flex-1">
-            <Building2 size={18} className="text-green-700" />
-            <select
-              value={corretoraSelecionada}
-              onChange={(e) => setCorretoraSelecionada(e.target.value)}
-              className="px-3 py-1.5 border rounded-lg text-sm bg-white font-medium text-gray-700"
-            >
-              <option value="todas">🏢 Todas as corretoras</option>
-              {corretoras.map(c => (
-                <option key={c.id} value={c.id}>{c.nome}</option>
-              ))}
-            </select>
-
             <select
               value={filtroAno}
               onChange={(e) => setFiltroAno(e.target.value)}
@@ -326,15 +331,6 @@ export default function Dividendos() {
               <span className="text-gray-400 ml-2">({dividendosFiltrados.length} registros)</span>
             </span>
           </div>
-
-          <button
-            onClick={atualizarDividendos}
-            disabled={atualizando}
-            className="flex items-center gap-2 bg-green-700 hover:bg-green-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium"
-          >
-            <RefreshCw size={14} className={atualizando ? 'animate-spin' : ''} />
-            {atualizando ? 'Buscando...' : 'Atualizar dividendos'}
-          </button>
         </div>
 
         {/* Status da atualização */}

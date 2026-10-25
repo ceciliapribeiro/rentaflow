@@ -15,6 +15,8 @@ const CORES_PADRAO = [
 import { formatBRL, formatData } from '../utils/formatters'
 import { useToast, useConfirm } from '../contexts/ToastContext'
 import { useCorretora } from '../contexts/CorretoraContext'
+import { sincronizarDividendosRico } from '../utils/sincronizarDividendosRico'
+import Header from '../components/Header'
 
 export default function Corretoras() {
   const { user } = useAuth()
@@ -54,6 +56,9 @@ export default function Corretoras() {
         .eq('user_id', user.id).order('nome')
       if (error) throw error
       setCorretoras(corrs || [])
+
+      // Garante sincronização de dividendos sem corretora para a Rico
+      await sincronizarDividendosRico(user.id, corrs).catch(console.warn)
 
       const resumo = {}
       for (const c of (corrs || [])) {
@@ -248,21 +253,12 @@ export default function Corretoras() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-green-800 text-white">
-        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center gap-4">
-          <button onClick={() => navigate('/dashboard')} className="p-2 hover:bg-green-700 rounded-lg">
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h1 className="text-xl font-bold">Corretoras</h1>
-            <p className="text-green-200 text-sm">
-              Gerencie as corretoras e reatribua operações
-            </p>
-          </div>
-        </div>
-      </header>
+      <Header
+        titulo="Corretoras"
+        subtitulo="Gerencie as corretoras e organize a distribuição da sua carteira"
+      />
 
-      <main className="max-w-6xl mx-auto px-4 py-6">
+      <main className="max-w-7xl mx-auto px-4 py-6">
         {erro && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-start gap-3">
             <AlertTriangle className="text-red-500 flex-shrink-0" size={20} />
