@@ -5,16 +5,43 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import Header from '../components/Header'
 import {
-  TrendingUp, Wallet, DollarSign, PieChart,
+  TrendingUp, Wallet, DollarSign, PieChart as PieIcon,
   RefreshCw, ArrowUpRight, ArrowDownRight,
   Upload, Zap, Database, Calculator, ChevronRight,
   ArrowUpDown, ChevronUp, ChevronDown, Building2,
-  Layers, Check
+  Layers, Check, Filter
 } from 'lucide-react'
+import {
+  PieChart as RechartsPieChart,
+  Pie,
+  Cell,
+  Tooltip as RechartsTooltip,
+  ResponsiveContainer
+} from 'recharts'
 import { formatBRL } from '../utils/formatters'
 import { calcularPosicoes, tickersAtivos as getTickers } from '../utils/calcularPosicoes'
 import { useToast } from '../contexts/ToastContext'
 import { avaliarDividendosCorretora } from '../utils/avaliarDividendosCorretora'
+
+function TooltipPieTipo({ active, payload }) {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload
+    return (
+      <div className="bg-white border border-gray-100 rounded-xl shadow-xl p-3 text-xs z-50">
+        <div className="flex items-center gap-1.5 mb-1.5">
+          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: data.cor }} />
+          <p className="font-bold text-gray-800 text-sm">{data.nome}</p>
+        </div>
+        <p className="text-gray-900 font-extrabold text-base mb-1">{formatBRL(data.valor)}</p>
+        <div className="flex items-center justify-between gap-4 text-gray-500 pt-1 border-t border-gray-100">
+          <span>{data.pct.toFixed(1)}% da carteira</span>
+          <span className="font-medium text-gray-700">{data.quantidadeAtivos} ativos</span>
+        </div>
+      </div>
+    )
+  }
+  return null
+}
 
 export default function Dashboard() {
   const { user } = useAuth()
@@ -42,6 +69,9 @@ export default function Dashboard() {
 
   // Estado para controlar a ordenação (padrão: valor_atual do maior para o menor)
   const [sortConfig, setSortConfig] = useState({ key: 'valor_atual', direction: 'desc' })
+
+  // Filtro por tipo de ativo: 'todos' | 'Acao' | 'FII' | 'BDR'
+  const [tipoFiltro, setTipoFiltro] = useState('todos')
 
   useEffect(() => {
     if (user) carregarDados()
@@ -231,6 +261,12 @@ export default function Dashboard() {
         pat += valorAtual > 0 ? valorAtual : custoInvestido
       })
 
+      // Atribui porcentagem de cada ativo no patrimônio desta corretora
+      lista.forEach(item => {
+        const v = item.valor_atual > 0 ? item.valor_atual : item.valor_investido
+        item.porcentagem = pat > 0 ? (v / pat) * 100 : 0
+      })
+
       corr.patrimonio = pat
       corr.totalAtivos = lista.length
       corr.ativos = lista
@@ -300,6 +336,12 @@ export default function Dashboard() {
         distribCorretoras: porCorretora,
       })
       patrimonio += valorAtual > 0 ? valorAtual : custoInvestido
+    })
+
+    // Atribui porcentagem de cada ativo no patrimônio consolidado
+    lista.forEach(item => {
+      const v = item.valor_atual > 0 ? item.valor_atual : item.valor_investido
+      item.porcentagem = patrimonio > 0 ? (v / patrimonio) * 100 : 0
     })
 
     const totalAportes = todosAportes.reduce((s, a) => s + Number(a.valor || 0), 0)
@@ -389,26 +431,135 @@ export default function Dashboard() {
     setSortConfig({ key, direction })
   }
 
+  // Normalizador de tipos (FII, Acao, BDR, etc.)
+  const normalizarTipo = (tipo, ticker) => {
+    if (!tipo) {
+      if (ticker && ticker.endsWith('11') && ticker.length >= 5) return 'FII'
+      return 'Acao'
+    }
+    const t = String(tipo).trim().toLowerCase()
+    if (t === 'fii' || t.includes('imobili') || t.includes('fundo')) return 'FII'
+    if (t === 'acao' || t === 'ação' || t.includes('acoe') || t.includes('açõe') || t.includes('stock')) return 'Acao'
+    if (t === 'bdr' || t.includes('bdr')) return 'BDR'
+    return tipo
+  }
+
+  // --- CONTADORES POR TIPO DE ATIVO ---
+  const contadoresTipo = useMemo(() => {
+    let todos = 0
+    let acoes = 0
+    let fiis = 0
+    let bdrs = 0
+    let outros = 0
+
+    ;(dadosAtivos.ativos || []).forEach(a => {
+      todos++
+      const t = normalizarTipo(a.tipo, a.ticker)
+      if (t === 'Acao') acoes++
+      else if (t === 'FII') fiis++
+      else if (t === 'BDR') bdrs++
+      else outros++
+    })
+
+    return { todos, acoes, fiis, bdrs, outros }
+  }, [dadosAtivos.ativos])
+
+  // --- COMPOSIÇÃO POR TIPO (PARA O GRÁFICO DE PIZZA) ---
+  const composicaoPorTipo = useMemo(() => {
+    const mapa = {
+      FII: {
+        tipo: 'FII',
+        nome: 'Fundos Imobiliários',
+        sigla: 'FIIs',
+        valor: 0,
+        quantidadeAtivos: 0,
+        cor: '#7c3aed',
+      },
+      Acao: {
+        tipo: 'Acao',
+        nome: 'Ações',
+        sigla: 'Ações',
+        valor: 0,
+        quantidadeAtivos: 0,
+        cor: '#2563eb',
+      },
+    }
+    let totalGeral = 0
+
+    ;(dadosAtivos.ativos || []).forEach(ativo => {
+      let t = normalizarTipo(ativo.tipo, ativo.ticker)
+      if (t !== 'FII' && t !== 'Acao' && t !== 'BDR') {
+        t = 'Outros'
+      }
+      if (t === 'BDR') {
+        if (!mapa['BDR']) {
+          mapa['BDR'] = {
+            tipo: 'BDR',
+            nome: 'BDRs',
+            sigla: 'BDRs',
+            valor: 0,
+            quantidadeAtivos: 0,
+            cor: '#0891b2',
+          }
+        }
+      } else if (t === 'Outros') {
+        if (!mapa['Outros']) {
+          mapa['Outros'] = {
+            tipo: 'Outros',
+            nome: 'Outros',
+            sigla: 'Outros',
+            valor: 0,
+            quantidadeAtivos: 0,
+            cor: '#6b7280',
+          }
+        }
+      }
+
+      const val = ativo.valor_atual > 0 ? ativo.valor_atual : (ativo.valor_investido || 0)
+      if (mapa[t]) {
+        mapa[t].valor += val
+        mapa[t].quantidadeAtivos += 1
+        totalGeral += val
+      }
+    })
+
+    return Object.values(mapa)
+      .filter(item => item.valor > 0 || item.quantidadeAtivos > 0)
+      .map(item => ({
+        ...item,
+        pct: totalGeral > 0 ? (item.valor / totalGeral) * 100 : 0,
+      }))
+      .sort((a, b) => b.valor - a.valor)
+  }, [dadosAtivos.ativos])
+
+  // --- FILTRO POR TIPO ---
+  const ativosFiltrados = useMemo(() => {
+    let items = dadosAtivos.ativos || []
+    if (tipoFiltro !== 'todos') {
+      items = items.filter(a => {
+        const t = normalizarTipo(a.tipo, a.ticker)
+        return t === tipoFiltro
+      })
+    }
+    return items
+  }, [dadosAtivos.ativos, tipoFiltro])
+
   const sortedAtivos = useMemo(() => {
-    let sortableItems = [...dadosAtivos.ativos]
+    let sortableItems = [...ativosFiltrados]
     if (sortConfig !== null) {
       sortableItems.sort((a, b) => {
-        if (typeof a[sortConfig.key] === 'string') {
+        if (sortConfig.key === 'ticker' || sortConfig.key === 'tipo' || sortConfig.key === 'razao_social') {
           return sortConfig.direction === 'asc'
-            ? a[sortConfig.key].localeCompare(b[sortConfig.key])
-            : b[sortConfig.key].localeCompare(a[sortConfig.key])
+            ? String(a[sortConfig.key] || '').localeCompare(String(b[sortConfig.key] || ''))
+            : String(b[sortConfig.key] || '').localeCompare(String(a[sortConfig.key] || ''))
         }
-        if (a[sortConfig.key] < b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? -1 : 1
-        }
-        if (a[sortConfig.key] > b[sortConfig.key]) {
-          return sortConfig.direction === 'asc' ? 1 : -1
-        }
-        return 0
+        const valA = Number(a[sortConfig.key]) || 0
+        const valB = Number(b[sortConfig.key]) || 0
+        return sortConfig.direction === 'asc' ? valA - valB : valB - valA
       })
     }
     return sortableItems
-  }, [dadosAtivos.ativos, sortConfig])
+  }, [ativosFiltrados, sortConfig])
 
   // Componente auxiliar para os cabeçalhos ordenáveis
   const HeaderCell = ({ label, sortKey, align = 'left' }) => {
@@ -573,7 +724,7 @@ export default function Dashboard() {
                 )
               )
             }
-            icon={PieChart}
+            icon={PieIcon}
             cor="text-purple-600"
             destino="/patrimonio"
           />
@@ -606,130 +757,246 @@ export default function Dashboard() {
           />
         </div>
 
-        {/* SEÇÃO: VISÃO SEPARADA POR CORRETORA (OTIMIZAÇÃO DO DASHBOARD) */}
-        {listaCorretorasAtivas.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-              <div>
-                <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
-                  <Building2 size={20} className="text-green-700" />
-                  Divisão de Investimentos por Corretora
-                </h3>
-                <p className="text-xs text-gray-500">
-                  Compare o patrimônio e resultados em cada instituição financeira
-                </p>
+        {/* SEÇÃO GRÁFICA: COMPOSIÇÃO POR TIPO (PIE CHART) & DIVISÃO POR CORRETORA */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
+          {/* GRÁFICO DE PIZZA / ROSCA: COMPOSIÇÃO DE AÇÕES VS FIIS */}
+          <div className={`${listaCorretorasAtivas.length > 0 ? 'lg:col-span-5' : 'lg:col-span-12'} bg-white rounded-xl shadow-sm border p-6 flex flex-col justify-between`}>
+            <div>
+              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                    <PieIcon size={20} className="text-purple-600" />
+                    Composição por Tipo de Ativo
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    Proporção entre Fundos Imobiliários e Ações {ehConsolidado ? 'na carteira consolidada' : `na ${corretoraAtiva?.nome}`}
+                  </p>
+                </div>
+
+                {composicaoPorTipo.length > 0 && (
+                  <span className="text-xs font-semibold text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
+                    {dadosAtivos.totalAtivos} ativos
+                  </span>
+                )}
               </div>
 
-              {/* Barra de distribuição percentual */}
-              {consolidado.patrimonio > 0 && (
-                <span className="text-xs font-semibold text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
-                  Total Consolidado: {formatBRL(consolidado.patrimonio)}
-                </span>
+              {composicaoPorTipo.length === 0 ? (
+                <div className="h-56 flex items-center justify-center text-gray-400 text-sm">
+                  Sem dados de composição
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                  {/* Gráfico Recharts */}
+                  <div className="w-full sm:w-1/2 h-56 relative flex items-center justify-center">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RechartsPieChart>
+                        <Pie
+                          data={composicaoPorTipo}
+                          dataKey="valor"
+                          nameKey="nome"
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={52}
+                          outerRadius={82}
+                          paddingAngle={3}
+                        >
+                          {composicaoPorTipo.map((entry) => (
+                            <Cell key={entry.tipo} fill={entry.cor} />
+                          ))}
+                        </Pie>
+                        <RechartsTooltip content={<TooltipPieTipo />} />
+                      </RechartsPieChart>
+                    </ResponsiveContainer>
+                    {/* Centro do Donut */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Patrimônio</span>
+                      <span className="text-xs font-bold text-gray-800 text-center px-2">
+                        {formatBRL(dadosAtivos.patrimonio)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Cards da Legenda e Métricas por Tipo */}
+                  <div className="w-full sm:w-1/2 flex flex-col gap-2.5">
+                    {composicaoPorTipo.map(item => {
+                      const isAtivo = tipoFiltro === item.tipo
+                      return (
+                        <div
+                          key={item.tipo}
+                          onClick={() => setTipoFiltro(tipoFiltro === item.tipo ? 'todos' : item.tipo)}
+                          className={`p-3 rounded-lg border transition-all cursor-pointer flex items-center justify-between ${
+                            isAtivo
+                              ? 'ring-2 ring-purple-600/30 bg-purple-50/50 border-purple-400'
+                              : 'bg-gray-50/60 hover:bg-gray-100/80 border-gray-200'
+                          }`}
+                          title={`Clique para filtrar ${item.nome} na tabela abaixo`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="w-3.5 h-3.5 rounded-full flex-shrink-0"
+                              style={{ backgroundColor: item.cor }}
+                            />
+                            <div>
+                              <div className="flex items-center gap-1.5">
+                                <h5 className="font-bold text-gray-900 text-xs sm:text-sm">{item.nome}</h5>
+                              </div>
+                              <p className="text-xs font-semibold text-gray-700 mt-0.5">
+                                {formatBRL(item.valor)}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="text-right flex flex-col items-end">
+                            <span
+                              className="text-xs px-2 py-0.5 rounded-full font-bold shadow-xs inline-block"
+                              style={{
+                                backgroundColor: `${item.cor}18`,
+                                color: item.cor,
+                                border: `1px solid ${item.cor}30`,
+                              }}
+                            >
+                              {item.pct.toFixed(1)}%
+                            </span>
+                            <span className="text-[10px] text-gray-500 mt-0.5">
+                              {item.quantidadeAtivos} ativos
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
               )}
             </div>
 
-            {/* Barra contínua de proporção */}
-            {consolidado.patrimonio > 0 && (
-              <div className="mb-5">
-                <div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden flex shadow-inner">
-                  {listaCorretorasAtivas.map(c => {
-                    const pct = (c.patrimonio / consolidado.patrimonio) * 100
-                    if (pct <= 0) return null
-                    return (
-                      <div
-                        key={c.id}
-                        className="h-full transition-all relative group"
-                        style={{
-                          width: `${pct}%`,
-                          backgroundColor: c.cor,
-                        }}
-                        title={`${c.nome}: ${formatBRL(c.patrimonio)} (${pct.toFixed(1)}%)`}
-                      />
-                    )
-                  })}
-                </div>
-              </div>
+            {composicaoPorTipo.length > 0 && (
+              <p className="text-[11px] text-gray-400 mt-4 text-center border-t border-gray-100 pt-2">
+                💡 Clique em uma categoria para filtrar a tabela da carteira.
+              </p>
             )}
+          </div>
 
-            {/* Grid de Cards das Corretoras */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {listaCorretorasAtivas.map(c => {
-                const pct = consolidado.patrimonio > 0
-                  ? (c.patrimonio / consolidado.patrimonio) * 100
-                  : 0
-                const selecionado = String(corretoraSelecionada) === String(c.id)
+          {/* DIVISÃO DE INVESTIMENTOS POR CORRETORA */}
+          {listaCorretorasAtivas.length > 0 && (
+            <div className="lg:col-span-7 bg-white rounded-xl shadow-sm border p-6 flex flex-col justify-between">
+              <div>
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                      <Building2 size={20} className="text-green-700" />
+                      Divisão de Investimentos por Corretora
+                    </h3>
+                    <p className="text-xs text-gray-500">
+                      Compare o patrimônio e resultados em cada instituição financeira
+                    </p>
+                  </div>
 
-                return (
-                  <div
-                    key={c.id}
-                    onClick={() => setCorretoraSelecionada(selecionado ? 'todas' : String(c.id))}
-                    className={`rounded-xl border p-4 cursor-pointer transition-all relative overflow-hidden ${
-                      selecionado
-                        ? 'border-green-600 shadow-md bg-green-50/20 ring-2 ring-green-600/20'
-                        : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
-                    }`}
-                  >
-                    <div
-                      className="absolute top-0 left-0 right-0 h-1.5"
-                      style={{ backgroundColor: c.cor }}
-                    />
+                  {consolidado.patrimonio > 0 && (
+                    <span className="text-xs font-semibold text-gray-600 bg-gray-100 px-3 py-1 rounded-full">
+                      Total: {formatBRL(consolidado.patrimonio)}
+                    </span>
+                  )}
+                </div>
 
-                    <div className="flex items-center justify-between mb-3 mt-1">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-3 h-3 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: c.cor }}
-                        />
-                        <h4 className="font-bold text-gray-800 text-base">{c.nome}</h4>
-                        {c.codigo && (
-                          <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
-                            {c.codigo}
-                          </span>
-                        )}
-                      </div>
-
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                          selecionado
-                            ? 'bg-green-700 text-white'
-                            : 'bg-gray-100 text-gray-700'
-                        }`}
-                      >
-                        {pct.toFixed(1)}% do total
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-3 text-sm mb-3">
-                      <div>
-                        <p className="text-xs text-gray-500">Patrimônio</p>
-                        <p className="font-bold text-gray-900 text-base">{formatBRL(c.patrimonio)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">Ativos</p>
-                        <p className="font-bold text-gray-800 text-base">{c.totalAtivos} ativos</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">Total Aportado</p>
-                        <p className="font-semibold text-gray-700">{formatBRL(c.aportes)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">Dividendos</p>
-                        <p className="font-semibold text-green-700">{formatBRL(c.dividendos)}</p>
-                      </div>
-                    </div>
-
-                    <div className="pt-2 border-t border-gray-100 flex items-center justify-between text-xs">
-                      <span className={selecionado ? 'font-bold text-green-700' : 'text-gray-500'}>
-                        {selecionado ? '✓ Filtro ativo no Dashboard' : 'Clique para filtrar esta corretora'}
-                      </span>
-                      <ChevronRight size={14} className={selecionado ? 'text-green-700' : 'text-gray-400'} />
+                {/* Barra contínua de proporção */}
+                {consolidado.patrimonio > 0 && (
+                  <div className="mb-5">
+                    <div className="h-3 w-full bg-gray-100 rounded-full overflow-hidden flex shadow-inner">
+                      {listaCorretorasAtivas.map(c => {
+                        const pct = (c.patrimonio / consolidado.patrimonio) * 100
+                        if (pct <= 0) return null
+                        return (
+                          <div
+                            key={c.id}
+                            className="h-full transition-all relative group"
+                            style={{
+                              width: `${pct}%`,
+                              backgroundColor: c.cor,
+                            }}
+                            title={`${c.nome}: ${formatBRL(c.patrimonio)} (${pct.toFixed(1)}%)`}
+                          />
+                        )
+                      })}
                     </div>
                   </div>
-                )
-              })}
+                )}
+              </div>
+
+              {/* Grid de Cards das Corretoras */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {listaCorretorasAtivas.map(c => {
+                  const pct = consolidado.patrimonio > 0
+                    ? (c.patrimonio / consolidado.patrimonio) * 100
+                    : 0
+                  const selecionado = String(corretoraSelecionada) === String(c.id)
+
+                  return (
+                    <div
+                      key={c.id}
+                      onClick={() => setCorretoraSelecionada(selecionado ? 'todas' : String(c.id))}
+                      className={`rounded-xl border p-3 cursor-pointer transition-all relative overflow-hidden ${
+                        selecionado
+                          ? 'border-green-600 shadow-md bg-green-50/20 ring-2 ring-green-600/20'
+                          : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+                      }`}
+                    >
+                      <div
+                        className="absolute top-0 left-0 right-0 h-1.5"
+                        style={{ backgroundColor: c.cor }}
+                      />
+
+                      <div className="flex items-center justify-between mb-2 mt-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                            style={{ backgroundColor: c.cor }}
+                          />
+                          <h4 className="font-bold text-gray-800 text-sm truncate max-w-[90px]">{c.nome}</h4>
+                        </div>
+
+                        <span
+                          className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${
+                            selecionado
+                              ? 'bg-green-700 text-white'
+                              : 'bg-gray-100 text-gray-700'
+                          }`}
+                        >
+                          {pct.toFixed(1)}%
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2 text-xs mb-2">
+                        <div>
+                          <p className="text-[10px] text-gray-500">Patrimônio</p>
+                          <p className="font-bold text-gray-900 text-xs">{formatBRL(c.patrimonio)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-gray-500">Ativos</p>
+                          <p className="font-bold text-gray-800 text-xs">{c.totalAtivos} ativos</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-gray-500">Aportes</p>
+                          <p className="font-semibold text-gray-700 text-xs">{formatBRL(c.aportes)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-gray-500">Dividendos</p>
+                          <p className="font-semibold text-green-700 text-xs">{formatBRL(c.dividendos)}</p>
+                        </div>
+                      </div>
+
+                      <div className="pt-1.5 border-t border-gray-100 flex items-center justify-between text-[11px]">
+                        <span className={selecionado ? 'font-bold text-green-700' : 'text-gray-400'}>
+                          {selecionado ? '✓ Filtrado' : 'Filtrar'}
+                        </span>
+                        <ChevronRight size={12} className={selecionado ? 'text-green-700' : 'text-gray-400'} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* TABELA: MINHA CARTEIRA */}
         <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
@@ -806,6 +1073,118 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* BARRA DE FILTROS POR TIPO DE ATIVO */}
+          <div className="px-6 py-3 bg-gray-50/70 border-b flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1 mr-1">
+                <Filter size={13} className="text-gray-400" />
+                Filtrar:
+              </span>
+
+              <button
+                type="button"
+                onClick={() => setTipoFiltro('todos')}
+                className={`px-3 py-1 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                  tipoFiltro === 'todos'
+                    ? 'bg-gray-900 text-white shadow-sm'
+                    : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                }`}
+              >
+                <span>Todos</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                  tipoFiltro === 'todos' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'
+                }`}>
+                  {contadoresTipo.todos}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTipoFiltro('Acao')}
+                className={`px-3 py-1 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                  tipoFiltro === 'Acao'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-white text-blue-700 hover:bg-blue-50 border border-blue-200'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-blue-500 inline-block" />
+                <span>Ações</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                  tipoFiltro === 'Acao' ? 'bg-white/20 text-white' : 'bg-blue-50 text-blue-700'
+                }`}>
+                  {contadoresTipo.acoes}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTipoFiltro('FII')}
+                className={`px-3 py-1 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                  tipoFiltro === 'FII'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'bg-white text-purple-700 hover:bg-purple-50 border border-purple-200'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-purple-500 inline-block" />
+                <span>Fundos Imobiliários (FIIs)</span>
+                <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                  tipoFiltro === 'FII' ? 'bg-white/20 text-white' : 'bg-purple-50 text-purple-700'
+                }`}>
+                  {contadoresTipo.fiis}
+                </span>
+              </button>
+
+              {contadoresTipo.bdrs > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setTipoFiltro('BDR')}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                    tipoFiltro === 'BDR'
+                      ? 'bg-cyan-600 text-white shadow-sm'
+                      : 'bg-white text-cyan-700 hover:bg-cyan-50 border border-cyan-200'
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-cyan-500 inline-block" />
+                  <span>BDRs</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                    tipoFiltro === 'BDR' ? 'bg-white/20 text-white' : 'bg-cyan-50 text-cyan-700'
+                  }`}>
+                    {contadoresTipo.bdrs}
+                  </span>
+                </button>
+              )}
+
+              {contadoresTipo.outros > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setTipoFiltro('Outros')}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                    tipoFiltro === 'Outros'
+                      ? 'bg-gray-600 text-white shadow-sm'
+                      : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+                  }`}
+                >
+                  <span>Outros</span>
+                  <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                    tipoFiltro === 'Outros' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {contadoresTipo.outros}
+                  </span>
+                </button>
+              )}
+            </div>
+
+            {tipoFiltro !== 'todos' && (
+              <button
+                type="button"
+                onClick={() => setTipoFiltro('todos')}
+                className="text-xs text-gray-500 hover:text-gray-800 underline underline-offset-2 flex items-center gap-1"
+              >
+                Limpar filtro ({tipoFiltro === 'Acao' ? 'Ações' : tipoFiltro === 'FII' ? 'FIIs' : tipoFiltro})
+              </button>
+            )}
+          </div>
+
           {loading ? (
             <div className="p-8 text-center text-gray-500">Carregando carteira...</div>
           ) : dadosAtivos.ativos.length === 0 ? (
@@ -841,7 +1220,11 @@ export default function Dashboard() {
               {ehConsolidado && modoTabela === 'separado' ? (
                 <div className="divide-y divide-gray-200">
                   {listaCorretorasAtivas.map(corr => {
-                    if (corr.ativos.length === 0) return null
+                    const ativosFiltradosCorr = (corr.ativos || []).filter(a => {
+                      if (tipoFiltro === 'todos') return true
+                      return normalizarTipo(a.tipo, a.ticker) === tipoFiltro
+                    })
+                    if (ativosFiltradosCorr.length === 0) return null
                     return (
                       <div key={corr.id} className="p-4 bg-gray-50/60">
                         <div className="flex items-center justify-between mb-3 px-2">
@@ -852,7 +1235,7 @@ export default function Dashboard() {
                             />
                             <h4 className="font-bold text-gray-900 text-base">{corr.nome}</h4>
                             <span className="text-xs text-gray-500 bg-white border px-2 py-0.5 rounded-full">
-                              {corr.ativos.length} ativo(s)
+                              {ativosFiltradosCorr.length} de {corr.ativos.length} ativo(s)
                             </span>
                           </div>
                           <div className="text-right">
@@ -871,11 +1254,14 @@ export default function Dashboard() {
                                 <th className="py-2 px-3 text-right">Preço Médio</th>
                                 <th className="py-2 px-3 text-right">Preço Atual</th>
                                 <th className="py-2 px-3 text-right">Valor Atual</th>
+                                <th className="py-2 px-3 text-right">% Subtotal</th>
+                                <th className="py-2 px-3 text-right">DY</th>
+                                <th className="py-2 px-3 text-right">P/VP</th>
                                 <th className="py-2 px-3 text-right">Variação</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {corr.ativos.map(a => (
+                              {ativosFiltradosCorr.map(a => (
                                 <tr
                                   key={a.ticker}
                                   onClick={() => navigate(`/ativo/${a.ticker}`)}
@@ -883,7 +1269,9 @@ export default function Dashboard() {
                                 >
                                   <td className="py-2 px-3 font-semibold text-blue-700">{a.ticker}</td>
                                   <td className="py-2 px-3">
-                                    <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">{a.tipo}</span>
+                                    <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
+                                      {normalizarTipo(a.tipo, a.ticker) === 'FII' ? 'FII' : normalizarTipo(a.tipo, a.ticker) === 'Acao' ? 'Ação' : a.tipo}
+                                    </span>
                                   </td>
                                   <td className="py-2 px-3 text-right">{a.quantidade}</td>
                                   <td className="py-2 px-3 text-right">{formatBRL(a.preco_medio)}</td>
@@ -891,6 +1279,25 @@ export default function Dashboard() {
                                     {a.tem_preco ? formatBRL(a.preco_atual) : <span className="text-gray-400 text-xs">sem preço</span>}
                                   </td>
                                   <td className="py-2 px-3 text-right font-medium">{formatBRL(a.valor_atual)}</td>
+                                  <td className="py-2 px-3 text-right">
+                                    <div className="inline-flex items-center gap-1.5 justify-end">
+                                      <div className="w-10 bg-gray-100 rounded-full h-1.5 overflow-hidden hidden sm:block">
+                                        <div
+                                          className="bg-emerald-500 h-full rounded-full"
+                                          style={{ width: `${Math.min(100, Math.max(0, a.porcentagem || 0))}%` }}
+                                        />
+                                      </div>
+                                      <span className="font-semibold text-gray-800 text-xs">
+                                        {(a.porcentagem || 0).toFixed(1)}%
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3 text-right">
+                                    {a.dy > 0 ? `${a.dy.toFixed(2)}%` : '-'}
+                                  </td>
+                                  <td className="py-2 px-3 text-right">
+                                    {a.pvp > 0 ? a.pvp.toFixed(2) : '-'}
+                                  </td>
                                   <td className={`py-2 px-3 text-right font-medium ${
                                     a.variacao >= 0 ? 'text-green-600' : 'text-red-600'
                                   }`}>
@@ -918,75 +1325,106 @@ export default function Dashboard() {
                         <HeaderCell label="Preço médio" sortKey="preco_medio" align="right" />
                         <HeaderCell label="Preço atual" sortKey="preco_atual" align="right" />
                         <HeaderCell label="Valor atual" sortKey="valor_atual" align="right" />
+                        <HeaderCell label="% Carteira" sortKey="porcentagem" align="right" />
                         <HeaderCell label="DY" sortKey="dy" align="right" />
                         <HeaderCell label="P/VP" sortKey="pvp" align="right" />
                         <HeaderCell label="Variação" sortKey="variacao" align="right" />
                       </tr>
                     </thead>
                     <tbody>
-                      {sortedAtivos.map(a => {
-                        return (
-                          <tr
-                            key={a.ticker}
-                            onClick={() => navigate(`/ativo/${a.ticker}`)}
-                            className="border-b hover:bg-gray-50 cursor-pointer"
-                          >
-                            <td className="py-2 px-3">
-                              <span className="font-semibold text-blue-700">{a.ticker}</span>
-                              {a.razao_social && a.razao_social !== a.ticker && (
-                                <p className="text-[11px] text-gray-400 truncate max-w-[140px]">{a.razao_social}</p>
-                              )}
-                            </td>
-                            <td className="py-2 px-3">
-                              <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">{a.tipo}</span>
-                            </td>
-
-                            {/* Coluna de corretoras no modo consolidado */}
-                            {ehConsolidado && (
+                      {sortedAtivos.length === 0 ? (
+                        <tr>
+                          <td colSpan={ehConsolidado ? 11 : 10} className="py-8 text-center text-gray-500">
+                            Nenhum ativo encontrado para o filtro selecionado ({tipoFiltro === 'Acao' ? 'Ações' : tipoFiltro === 'FII' ? 'Fundos Imobiliários' : tipoFiltro}).
+                            <button
+                              type="button"
+                              onClick={() => setTipoFiltro('todos')}
+                              className="ml-2 text-green-700 underline font-semibold text-xs"
+                            >
+                              Mostrar todos
+                            </button>
+                          </td>
+                        </tr>
+                      ) : (
+                        sortedAtivos.map(a => {
+                          return (
+                            <tr
+                              key={a.ticker}
+                              onClick={() => navigate(`/ativo/${a.ticker}`)}
+                              className="border-b hover:bg-gray-50 cursor-pointer"
+                            >
                               <td className="py-2 px-3">
-                                <div className="flex items-center gap-1 flex-wrap max-w-[200px]">
-                                  {a.distribCorretoras && a.distribCorretoras.length > 0 ? (
-                                    a.distribCorretoras.map(dc => (
-                                      <span
-                                        key={dc.id}
-                                        className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded font-medium"
-                                        style={{
-                                          backgroundColor: `${dc.cor}20`,
-                                          color: dc.cor,
-                                        }}
-                                        title={`${dc.nome}: ${dc.quantidade} cotas (${formatBRL(dc.valor)})`}
-                                      >
-                                        <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: dc.cor }} />
-                                        {dc.nome}: {dc.quantidade}
-                                      </span>
-                                    ))
-                                  ) : (
-                                    <span className="text-gray-400 text-xs">-</span>
-                                  )}
+                                <span className="font-semibold text-blue-700">{a.ticker}</span>
+                                {a.razao_social && a.razao_social !== a.ticker && (
+                                  <p className="text-[11px] text-gray-400 truncate max-w-[140px]">{a.razao_social}</p>
+                                )}
+                              </td>
+                              <td className="py-2 px-3">
+                                <span className="px-2 py-0.5 rounded text-xs bg-gray-100 text-gray-700">
+                                  {normalizarTipo(a.tipo, a.ticker) === 'FII' ? 'FII' : normalizarTipo(a.tipo, a.ticker) === 'Acao' ? 'Ação' : a.tipo}
+                                </span>
+                              </td>
+
+                              {/* Coluna de corretoras no modo consolidado */}
+                              {ehConsolidado && (
+                                <td className="py-2 px-3">
+                                  <div className="flex items-center gap-1 flex-wrap max-w-[200px]">
+                                    {a.distribCorretoras && a.distribCorretoras.length > 0 ? (
+                                      a.distribCorretoras.map(dc => (
+                                        <span
+                                          key={dc.id}
+                                          className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded font-medium"
+                                          style={{
+                                            backgroundColor: `${dc.cor}20`,
+                                            color: dc.cor,
+                                          }}
+                                          title={`${dc.nome}: ${dc.quantidade} cotas (${formatBRL(dc.valor)})`}
+                                        >
+                                          <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: dc.cor }} />
+                                          {dc.nome}: {dc.quantidade}
+                                        </span>
+                                      ))
+                                    ) : (
+                                      <span className="text-gray-400 text-xs">-</span>
+                                    )}
+                                  </div>
+                                </td>
+                              )}
+
+                              <td className="py-2 px-3 text-right">{a.quantidade}</td>
+                              <td className="py-2 px-3 text-right">{formatBRL(a.preco_medio)}</td>
+                              <td className="py-2 px-3 text-right">
+                                {a.tem_preco ? formatBRL(a.preco_atual) : <span className="text-gray-400 text-xs">sem preço</span>}
+                              </td>
+                              <td className="py-2 px-3 text-right font-medium">{formatBRL(a.valor_atual)}</td>
+                              <td className="py-2 px-3 text-right">
+                                <div className="inline-flex items-center gap-1.5 justify-end">
+                                  <div className="w-12 bg-gray-100 rounded-full h-1.5 overflow-hidden hidden sm:block">
+                                    <div
+                                      className="bg-emerald-500 h-full rounded-full"
+                                      style={{ width: `${Math.min(100, Math.max(0, a.porcentagem || 0))}%` }}
+                                    />
+                                  </div>
+                                  <span className="font-semibold text-gray-800 text-xs">
+                                    {(a.porcentagem || 0).toFixed(1)}%
+                                  </span>
                                 </div>
                               </td>
-                            )}
-
-                            <td className="py-2 px-3 text-right">{a.quantidade}</td>
-                            <td className="py-2 px-3 text-right">{formatBRL(a.preco_medio)}</td>
-                            <td className="py-2 px-3 text-right">
-                              {a.tem_preco ? formatBRL(a.preco_atual) : <span className="text-gray-400 text-xs">sem preço</span>}
-                            </td>
-                            <td className="py-2 px-3 text-right font-medium">{formatBRL(a.valor_atual)}</td>
-                            <td className="py-2 px-3 text-right">
-                              {a.dy > 0 ? `${a.dy.toFixed(2)}%` : '-'}
-                            </td>
-                            <td className="py-2 px-3 text-right">
-                              {a.pvp > 0 ? a.pvp.toFixed(2) : '-'}
-                            </td>
-                            <td className={`py-2 px-3 text-right font-medium ${
-                              a.variacao >= 0 ? 'text-green-600' : 'text-red-600'
-                            }`}>
-                              {a.tem_preco ? `${a.variacao >= 0 ? '+' : ''}${a.variacao.toFixed(2)}%` : '-'}
-                            </td>
-                          </tr>
-                        )
-                      })}
+                              <td className="py-2 px-3 text-right">
+                                {a.dy > 0 ? `${a.dy.toFixed(2)}%` : '-'}
+                              </td>
+                              <td className="py-2 px-3 text-right">
+                                {a.pvp > 0 ? a.pvp.toFixed(2) : '-'}
+                              </td>
+                              <td className={`py-2 px-3 text-right font-medium ${
+                                a.variacao >= 0 ? 'text-green-600' : 'text-red-600'
+                              }`}>
+                                {a.tem_preco ? `${a.variacao >= 0 ? '+' : ''}${a.variacao.toFixed(2)}%` : '-'}
+                              </td>
+                            </tr>
+                          )
+                        })
+                      )}
                     </tbody>
                     <tfoot className="bg-gray-50 border-t font-semibold">
                       <tr>
@@ -995,6 +1433,9 @@ export default function Dashboard() {
                         </td>
                         <td className="py-3 px-3 text-right font-bold text-gray-900 text-base">
                           {formatBRL(dadosAtivos.patrimonio)}
+                        </td>
+                        <td className="py-3 px-3 text-right font-bold text-gray-900 text-xs">
+                          {tipoFiltro === 'todos' ? '100.0%' : '-'}
                         </td>
                         <td colSpan={3}></td>
                       </tr>
