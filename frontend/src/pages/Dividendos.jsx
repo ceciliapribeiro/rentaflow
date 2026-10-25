@@ -12,7 +12,7 @@ import {
 import { formatBRL, formatData } from '../utils/formatters'
 import { useToast, useConfirm } from '../contexts/ToastContext'
 import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
-import { sincronizarDividendosRico } from '../utils/sincronizarDividendosRico'
+import { avaliarDividendosCorretora } from '../utils/avaliarDividendosCorretora'
 
 export default function Dividendos() {
   const { user } = useAuth()
@@ -45,17 +45,7 @@ export default function Dividendos() {
 
   const carregarDividendos = async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('dividendos')
-      .select('*, corretoras(id, nome, cor)')
-      .eq('user_id', user.id)
-      .order('data_pagamento', { ascending: false })
-
-    if (error) {
-      console.error('Erro ao carregar dividendos:', error)
-      setDividendos([])
-    } else {
-      // Localiza a corretora Rico para atribuir dividendos que possam estar sem vínculo
+    try {
       let listaCorrs = corretoras
       if (!listaCorrs || listaCorrs.length === 0) {
         try {
@@ -65,23 +55,46 @@ export default function Dividendos() {
           listaCorrs = []
         }
       }
-      const rico = listaCorrs.find(c => c.nome?.trim().toLowerCase() === 'rico')
-      const dadosNormalizados = (data || []).map(d => {
-        if (!d.corretora_id && rico) {
-          return {
-            ...d,
-            corretora_id: rico.id,
-            corretoras: d.corretoras || { id: rico.id, nome: rico.nome, cor: rico.cor || '#ff7a00' },
-          }
-        }
-        return d
-      })
-      setDividendos(dadosNormalizados)
 
-      // Garante que o banco Supabase seja atualizado se houver registros sem corretora
-      sincronizarDividendosRico(user.id, listaCorrs).catch(console.warn)
+      // Busca dividendos e operações do usuário em paralelo
+      const [divsRes, opsRes] = await Promise.all([
+        supabase
+          .from('dividendos')
+          .select('*, corretoras(id, nome, cor)')
+          .eq('user_id', user.id)
+          .order('data_pagamento', { ascending: false }),
+        supabase
+          .from('operacoes')
+          .select('ticker, data, quantidade, operacao, corretora_id')
+          .eq('user_id', user.id)
+          .order('data', { ascending: true })
+      ])
+
+      if (divsRes.error) {
+        console.error('Erro ao carregar dividendos:', divsRes.error)
+        setDividendos([])
+      } else {
+        // Avalia a corretora de cada dividendo com base nas datas e custódia real das operações
+        const { dividendosNormalizados, divergencias, salvarNoBanco } = avaliarDividendosCorretora(
+          divsRes.data || [],
+          opsRes.data || [],
+          listaCorrs
+        )
+
+        setDividendos(dividendosNormalizados)
+
+        // Se houver proventos que estavam na corretora errada ou sem corretora, sincroniza no Supabase
+        if (divergencias.length > 0) {
+          console.log(`[RentaFlow] ${divergencias.length} dividendo(s) reatribuídos para refletir as datas das operações.`)
+          salvarNoBanco().catch(console.warn)
+        }
+      }
+    } catch (err) {
+      console.error('Falha geral ao carregar dividendos:', err)
+      setDividendos([])
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const atualizarDividendos = async () => {

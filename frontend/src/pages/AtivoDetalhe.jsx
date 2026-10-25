@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { formatBRL, formatData } from '../utils/formatters'
 import Header from '../components/Header'
+import { avaliarDividendosCorretora } from '../utils/avaliarDividendosCorretora'
 
 export default function AtivoDetalhe() {
   const { user } = useAuth()
@@ -78,18 +79,12 @@ export default function AtivoDetalhe() {
         .eq('ticker', tickerUp)
         .order('data_pagamento', { ascending: false })
 
-      // Identifica corretora Rico para fallback em dividendos sem vínculo
-      let rico = corretoras.find(c => c.nome?.trim().toLowerCase() === 'rico')
-      const divsNormalizados = (divs || []).map(d => {
-        if (!d.corretora_id && rico) {
-          return {
-            ...d,
-            corretora_id: rico.id,
-            corretoras: d.corretoras || { id: rico.id, nome: rico.nome, cor: rico.cor || '#ff7a00' },
-          }
-        }
-        return d
-      })
+      // Avalia a corretora de cada dividendo com base nas datas e custódia das operações
+      const { dividendosNormalizados: divsNormalizados } = avaliarDividendosCorretora(
+        divs || [],
+        ops || [],
+        corretoras
+      )
       setTodosDividendos(divsNormalizados)
 
       // 4. Calcula resumo consolidado e distribuição por corretora

@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { supabase } from '../lib/supabase'
 import {
   ArrowLeft, Plus, Edit2, Trash2, Save, X,
-  AlertTriangle, Building2, ArrowRightLeft, Eye, EyeOff,
+  AlertTriangle, Building2, ArrowRightLeft, Eye, EyeOff, RefreshCw,
 } from 'lucide-react'
 
 const CORES_PADRAO = [
@@ -15,7 +15,7 @@ const CORES_PADRAO = [
 import { formatBRL, formatData } from '../utils/formatters'
 import { useToast, useConfirm } from '../contexts/ToastContext'
 import { useCorretora } from '../contexts/CorretoraContext'
-import { sincronizarDividendosRico } from '../utils/sincronizarDividendosRico'
+import { avaliarDividendosCorretora } from '../utils/avaliarDividendosCorretora'
 import Header from '../components/Header'
 
 export default function Corretoras() {
@@ -29,6 +29,7 @@ export default function Corretoras() {
   const [corretoras, setCorretoras] = useState([])
   const [resumoPorCorretora, setResumoPorCorretora] = useState({})
   const [erro, setErro] = useState(null)
+  const [sincronizandoDivs, setSincronizandoDivs] = useState(false)
 
   const [editandoId, setEditandoId] = useState(null)
   const [novoNome, setNovoNome] = useState('')
@@ -57,8 +58,23 @@ export default function Corretoras() {
       if (error) throw error
       setCorretoras(corrs || [])
 
-      // Garante sincronização de dividendos sem corretora para a Rico
-      await sincronizarDividendosRico(user.id, corrs).catch(console.warn)
+      // Sincroniza e avalia dividendos de acordo com as datas das operações
+      try {
+        const [divsRaw, opsRaw] = await Promise.all([
+          supabase.from('dividendos').select('id, valor, data_pagamento, data_ex, ticker, corretora_id, quantidade').eq('user_id', user.id),
+          supabase.from('operacoes').select('ticker, data, quantidade, operacao, corretora_id').eq('user_id', user.id),
+        ])
+        const { divergencias, salvarNoBanco } = avaliarDividendosCorretora(
+          divsRaw.data || [],
+          opsRaw.data || [],
+          corrs || []
+        )
+        if (divergencias.length > 0) {
+          await salvarNoBanco()
+        }
+      } catch (errSync) {
+        console.warn('Aviso ao sincronizar dividendos:', errSync)
+      }
 
       const resumo = {}
       for (const c of (corrs || [])) {
@@ -81,6 +97,34 @@ export default function Corretoras() {
       setErro('Erro ao carregar: ' + err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const sincronizarDividendosCustodia = async () => {
+    setSincronizandoDivs(true)
+    try {
+      const [divsRaw, opsRaw] = await Promise.all([
+        supabase.from('dividendos').select('id, valor, data_pagamento, data_ex, ticker, corretora_id, quantidade').eq('user_id', user.id),
+        supabase.from('operacoes').select('ticker, data, quantidade, operacao, corretora_id').eq('user_id', user.id),
+      ])
+
+      const { divergencias, salvarNoBanco } = avaliarDividendosCorretora(
+        divsRaw.data || [],
+        opsRaw.data || [],
+        corretoras
+      )
+
+      if (divergencias.length > 0) {
+        const { atualizados } = await salvarNoBanco()
+        toast.success(`✅ ${atualizados} dividendo(s) sincronizados com as datas das operações!`)
+        await carregar()
+      } else {
+        toast.info('Todos os dividendos já estão alinhados com as operações e corretoras.')
+      }
+    } catch (err) {
+      toast.error('Erro ao sincronizar: ' + err.message)
+    } finally {
+      setSincronizandoDivs(false)
     }
   }
 
@@ -266,14 +310,26 @@ export default function Corretoras() {
           </div>
         )}
 
-        {!criandoNova && !editandoId && (
+        <div className="flex items-center gap-3 mb-6 flex-wrap">
+          {!criandoNova && !editandoId && (
+            <button
+              onClick={() => setCriandoNova(true)}
+              className="px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-600 flex items-center gap-2 text-sm font-medium shadow-sm transition-all"
+            >
+              <Plus size={18} /> Adicionar corretora
+            </button>
+          )}
+
           <button
-            onClick={() => setCriandoNova(true)}
-            className="mb-6 px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-600 flex items-center gap-2"
+            onClick={sincronizarDividendosCustodia}
+            disabled={sincronizandoDivs}
+            className="px-4 py-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 rounded-lg flex items-center gap-2 text-sm font-medium shadow-sm transition-all disabled:opacity-50"
+            title="Avalia todos os proventos com base nas datas e custódias reais das operações"
           >
-            <Plus size={18} /> Adicionar corretora
+            <RefreshCw size={15} className={sincronizandoDivs ? 'animate-spin text-green-700' : 'text-gray-500'} />
+            {sincronizandoDivs ? 'Sincronizando com operações...' : 'Sincronizar dividendos com operações'}
           </button>
-        )}
+        </div>
 
         {(criandoNova || editandoId) && (
           <div className="bg-white border rounded-xl p-6 mb-6">

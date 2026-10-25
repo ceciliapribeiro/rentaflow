@@ -14,6 +14,7 @@ import {
 import { formatBRL } from '../utils/formatters'
 import { calcularPosicoes, inferirTipo, tickersAtivos as getTickers } from '../utils/calcularPosicoes'
 import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
+import { avaliarDividendosCorretora } from '../utils/avaliarDividendosCorretora'
 
 const CORES_TIPO = {
   FII:   '#7c3aed',
@@ -84,20 +85,19 @@ export default function Patrimonio() {
         supabase.from('operacoes').select('*').eq('user_id', user.id).order('data', { ascending: true }),
         supabase.from('ativos').select('ticker, preco, tipo, razao_social'),
         supabase.from('aportes').select('data, valor, corretora_id').eq('user_id', user.id).order('data', { ascending: true }),
-        supabase.from('dividendos').select('valor, data_pagamento, corretora_id').eq('user_id', user.id),
+        supabase.from('dividendos').select('id, valor, data_pagamento, data_ex, ticker, corretora_id, quantidade').eq('user_id', user.id),
       ])
-      setOperacoes(opRes.data || [])
+      const ops = opRes.data || []
+      setOperacoes(ops)
       setAtivosBD(atRes.data || [])
       setAportes(apRes.data || [])
 
-      const rico = corretoras.find(c => c.nome?.trim().toLowerCase() === 'rico')
-      const divs = (divRes.data || []).map(d => {
-        if (!d.corretora_id && rico) {
-          return { ...d, corretora_id: rico.id }
-        }
-        return d
-      })
-      setDividendos(divs)
+      const { dividendosNormalizados } = avaliarDividendosCorretora(
+        divRes.data || [],
+        ops,
+        corretoras
+      )
+      setDividendos(dividendosNormalizados)
     } catch (err) {
       console.error('Erro ao carregar patrimônio:', err)
     } finally {
@@ -122,12 +122,8 @@ export default function Patrimonio() {
   // Filtra dividendos conforme corretora selecionada
   const dividendosFiltrados = useMemo(() => {
     if (ehConsolidado) return dividendos
-    const rico = corretoras.find(c => c.nome?.trim().toLowerCase() === 'rico')
-    return dividendos.filter(d => {
-      const cId = d.corretora_id || (rico ? rico.id : null)
-      return String(cId) === String(corretoraSelecionada)
-    })
-  }, [dividendos, corretoraSelecionada, ehConsolidado, corretoras])
+    return dividendos.filter(d => String(d.corretora_id) === String(corretoraSelecionada))
+  }, [dividendos, corretoraSelecionada, ehConsolidado])
 
   // Posições baseadas nas operações filtradas
   const posicoes = useMemo(() => calcularPosicoes(operacoesFiltradas), [operacoesFiltradas])

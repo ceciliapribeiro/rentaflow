@@ -14,7 +14,7 @@ import {
 import { formatBRL } from '../utils/formatters'
 import { calcularPosicoes, tickersAtivos as getTickers } from '../utils/calcularPosicoes'
 import { useToast } from '../contexts/ToastContext'
-import { sincronizarDividendosRico } from '../utils/sincronizarDividendosRico'
+import { avaliarDividendosCorretora } from '../utils/avaliarDividendosCorretora'
 
 export default function Dashboard() {
   const { user } = useAuth()
@@ -102,14 +102,9 @@ export default function Dashboard() {
       // 5) Dividendos
       const { data: divsRows } = await supabase
         .from('dividendos')
-        .select('valor, corretora_id')
+        .select('id, valor, corretora_id, ticker, data_pagamento, data_ex, quantidade')
         .eq('user_id', user.id)
       setTodosDividendos(divsRows || [])
-
-      // Sincroniza dividendos sem corretora para a corretora Rico
-      if (corretoras && corretoras.length > 0) {
-        sincronizarDividendosRico(user.id, corretoras).catch(console.warn)
-      }
 
     } catch (err) {
       console.error('Erro ao carregar dados do dashboard:', err)
@@ -179,14 +174,19 @@ export default function Dashboard() {
       if (mapa[k]) mapa[k].aportes += Number(ap.valor || 0)
     })
 
-    // Agrupa dividendos (com fallback para a corretora Rico se estiver sem vínculo)
-    const rico = corretoras.find(c => c.nome?.trim().toLowerCase() === 'rico')
-    todosDividendos.forEach(d => {
-      let corrId = d.corretora_id
-      if (!corrId && rico) {
-        corrId = rico.id
-      }
-      const k = corrId ? corrId : 'sem_corretora'
+    // Avalia dividendos com base nas datas e custódia real das operações
+    const { dividendosNormalizados, divergencias, salvarNoBanco } = avaliarDividendosCorretora(
+      todosDividendos,
+      todasOperacoes,
+      corretoras
+    )
+
+    if (divergencias.length > 0) {
+      salvarNoBanco().catch(console.warn)
+    }
+
+    dividendosNormalizados.forEach(d => {
+      const k = d.corretora_id ? d.corretora_id : 'sem_corretora'
       if (mapa[k]) mapa[k].dividendos += Number(d.valor || 0)
     })
 

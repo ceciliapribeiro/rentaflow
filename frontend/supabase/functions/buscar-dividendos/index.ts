@@ -42,6 +42,7 @@ interface Operacao {
   quantidade: number
   operacao: 'COMPRA' | 'VENDA'
   tipo_ativo?: string
+  corretora_id?: number | null
 }
 
 interface Snapshot {
@@ -75,14 +76,15 @@ function adicionarDiasUteis(data: Date, dias: number): Date {
   return atual
 }
 
-// Constrói snapshots de custódia por ticker usando data de LIQUIDAÇÃO (D+2 úteis)
-function construirHistoricoPosicoes(operacoes: Operacao[]): Map<string, Snapshot[]> {
-  const opsPorTicker = new Map<string, { data_liq: Date; delta: number }[]>()
+// Constrói snapshots de custódia por ticker e por corretora usando data de LIQUIDAÇÃO (D+2 úteis)
+function construirHistoricoPosicoesPorCorretora(operacoes: Operacao[]): Map<string, Map<number | null, Snapshot[]>> {
+  const opsPorTickerECorr = new Map<string, Map<number | null, { data_liq: Date; delta: number }[]>>()
 
   for (const op of operacoes) {
     const ticker = op.ticker.toUpperCase().trim()
     const qtde = Number(op.quantidade) || 0
     const tipo = (op.operacao || '').toUpperCase()
+    const cId = op.corretora_id !== undefined ? op.corretora_id : null
     if (qtde <= 0) continue
 
     // Parse data YYYY-MM-DD como local
@@ -91,8 +93,10 @@ function construirHistoricoPosicoes(operacoes: Operacao[]): Map<string, Snapshot
     const dataPregao = new Date(y, m - 1, d)
     const dataLiq = adicionarDiasUteis(dataPregao, 2)
 
-    if (!opsPorTicker.has(ticker)) opsPorTicker.set(ticker, [])
-    const lista = opsPorTicker.get(ticker)!
+    if (!opsPorTickerECorr.has(ticker)) opsPorTickerECorr.set(ticker, new Map())
+    const mapaCorr = opsPorTickerECorr.get(ticker)!
+    if (!mapaCorr.has(cId)) mapaCorr.set(cId, [])
+    const lista = mapaCorr.get(cId)!
 
     if (tipo === 'COMPRA') {
       lista.push({ data_liq: dataLiq, delta: +qtde })
@@ -101,19 +105,23 @@ function construirHistoricoPosicoes(operacoes: Operacao[]): Map<string, Snapshot
     }
   }
 
-  const historico = new Map<string, Snapshot[]>()
-  for (const [ticker, ops] of opsPorTicker.entries()) {
-    ops.sort((a, b) => a.data_liq.getTime() - b.data_liq.getTime())
-    let acumulado = 0
-    const snapshots: Snapshot[] = []
-    for (const op of ops) {
-      acumulado += op.delta
-      snapshots.push({
-        data_liquidacao: op.data_liq,
-        qtde_acumulada: Math.max(acumulado, 0),
-      })
+  const historico = new Map<string, Map<number | null, Snapshot[]>>()
+  for (const [ticker, mapaCorr] of opsPorTickerECorr.entries()) {
+    const mapaSnapshots = new Map<number | null, Snapshot[]>()
+    for (const [cId, ops] of mapaCorr.entries()) {
+      ops.sort((a, b) => a.data_liq.getTime() - b.data_liq.getTime())
+      let acumulado = 0
+      const snapshots: Snapshot[] = []
+      for (const op of ops) {
+        acumulado += op.delta
+        snapshots.push({
+          data_liquidacao: op.data_liq,
+          qtde_acumulada: Math.max(acumulado, 0),
+        })
+      }
+      mapaSnapshots.set(cId, snapshots)
     }
-    historico.set(ticker, snapshots)
+    historico.set(ticker, mapaSnapshots)
   }
 
   return historico
@@ -375,11 +383,11 @@ async function processarTicker(
   supabase: any,
   userId: string,
   ticker: string,
-  snapshots: Snapshot[],
+  snapshotsPorCorretora: Map<number | null, Snapshot[]>,
   existentesPorTicker: Map<string, Set<string>>,
   inicioBusca: Date,
   hojeLimite: Date,
-  corretoraId: number | null = null,
+  defaultCorretoraId: number | null = null,
 ): Promise<ResultadoTicker> {
   const resultado: ResultadoTicker = {
     ticker,
@@ -409,9 +417,21 @@ async function processarTicker(
         continue
       }
 
-      // Calcula qtde em custódia na data EX (D+2 já aplicado nos snapshots)
-      const qtde = qtdeEmCustodia(snapshots, prov.data_ex)
-      if (qtde <= 0) {
+      // Avalia a custódia em cada corretora na data EX
+      const custodias: { corretoraId: number | null; qtde: number }[] = []
+      let totalCustodia = 0
+
+      if (snapshotsPorCorretora) {
+        for (const [cId, snaps] of snapshotsPorCorretora.entries()) {
+          const q = qtdeEmCustodia(snaps, prov.data_ex)
+          if (q > 0) {
+            custodias.push({ corretoraId: cId, qtde: q })
+            totalCustodia += q
+          }
+        }
+      }
+
+      if (totalCustodia <= 0) {
         resultado.ignorados_sem_custodia += 1
         continue
       }
@@ -421,31 +441,34 @@ async function processarTicker(
       const mm = String(prov.data_pagamento.getMonth() + 1).padStart(2, '0')
       const dd = String(prov.data_pagamento.getDate()).padStart(2, '0')
       const dataPagISO = `${yyyy}-${mm}-${dd}`
+      const dataExISO = `${prov.data_ex.getFullYear()}-${String(prov.data_ex.getMonth() + 1).padStart(2, '0')}-${String(prov.data_ex.getDate()).padStart(2, '0')}`
 
-      // Dedup por chave TICKER_DATA_TIPO
-      const chave = `${dataPagISO}_${prov.tipo}`
-      if (chavesExistentes.has(chave)) {
-        resultado.duplicados += 1
-        continue
+      for (const item of custodias) {
+        const targetCorrId = item.corretoraId || defaultCorretoraId
+        const chave = `${dataPagISO}_${prov.tipo}`
+        if (chavesExistentes.has(chave)) {
+          resultado.duplicados += 1
+          continue
+        }
+
+        const valorTotal = Math.round(item.qtde * prov.valor_unitario * 100) / 100
+
+        novosRegistros.push({
+          user_id: userId,
+          ticker,
+          ano: yyyy,
+          data_pagamento: dataPagISO,
+          data_ex: dataExISO,
+          valor: valorTotal,
+          valor_unitario: prov.valor_unitario,
+          quantidade: item.qtde,
+          tipo_provento: prov.tipo,
+          fonte,
+          corretora_id: targetCorrId,
+        })
+
+        chavesExistentes.add(chave)
       }
-
-      const valorTotal = Math.round(qtde * prov.valor_unitario * 100) / 100
-
-      novosRegistros.push({
-        user_id: userId,
-        ticker,
-        ano: yyyy,
-        data_pagamento: dataPagISO,
-        data_ex: `${prov.data_ex.getFullYear()}-${String(prov.data_ex.getMonth() + 1).padStart(2, '0')}-${String(prov.data_ex.getDate()).padStart(2, '0')}`,
-        valor: valorTotal,
-        valor_unitario: prov.valor_unitario,
-        quantidade: qtde,
-        tipo_provento: prov.tipo,
-        fonte,
-        corretora_id: corretoraId,
-      })
-
-      chavesExistentes.add(chave)
     }
 
     if (novosRegistros.length > 0) {
@@ -491,7 +514,7 @@ serve(async (req) => {
     // 1) Carrega operações do usuário
     const { data: opsRaw, error: errOps } = await supabase
       .from('operacoes')
-      .select('ticker, data, quantidade, operacao')
+      .select('ticker, data, quantidade, operacao, corretora_id')
       .eq('user_id', userId)
       .order('data', { ascending: true })
 
@@ -506,6 +529,7 @@ serve(async (req) => {
         data: o.data,
         quantidade: Number(o.quantidade),
         operacao: o.operacao,
+        corretora_id: o.corretora_id || null,
       }))
 
     if (operacoes.length === 0) {
@@ -514,8 +538,8 @@ serve(async (req) => {
       }, 400)
     }
 
-    // 2) Constrói histórico de custódia (D+2 úteis)
-    const historico = construirHistoricoPosicoes(operacoes)
+    // 2) Constrói histórico de custódia por corretora (D+2 úteis)
+    const historico = construirHistoricoPosicoesPorCorretora(operacoes)
     const tickers = Array.from(historico.keys()).sort()
 
     // 3) Carrega dividendos já registrados (dedup)
