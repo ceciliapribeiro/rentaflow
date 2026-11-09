@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase.js'
+import historicoFiisMapa from './historicoFiisPrecisao.js'
 
 /**
  * Adiciona dias úteis (D+2) para considerar liquidação B3
@@ -19,58 +20,36 @@ function adicionarDiasUteis(dataStr, dias = 2) {
   return dt.toISOString().slice(0, 10)
 }
 
+// Ações ou Units de ações que não são FIIs (devem ser preservadas sem calibração histórica de FII)
+const NAO_FIIS = new Set([
+  'VALE3', 'PETR4', 'ITUB4', 'BBAS3', 'BBDC4', 'CMIG4', 'CURY3', 'CXSE3',
+  'CYRE3', 'DIRR3', 'ISAE4', 'ITSA4', 'POMO4', 'RAIZ4', 'RECV3',
+  'TAEE11', 'SAPR11', 'KLBN11', 'ALUP11', 'ENGI11', 'TIET11', 'BPAC11', 'SANB11'
+])
+
+/**
+ * Identifica se um ticker é Fundo Imobiliário / Fiagro
+ */
+export function ehFundoImobiliario(ticker) {
+  if (!ticker) return false
+  const t = String(ticker).toUpperCase().trim()
+  if (NAO_FIIS.has(t)) return false
+  return t.endsWith('11')
+}
+
 // ───────────────────────────────────────────────────────────
 // MAPA DE ALTA PRECISÃO HISTÓRICA (Investidor 10 / B3 Oficial)
 // Corrige arredondamentos de 2 casas do Fundamentus em toda a base histórica
+// Aplicado exclusivamente para Fundos Imobiliários e Fiagros
 // ───────────────────────────────────────────────────────────
 const HISTORICO_UNITARIO_PRECISAO = {
-  // VGRI11
+  ...historicoFiisMapa,
+
+  // Calibragens complementares confirmadas
   'VGRI11_2026-11-09': 0.0750,
-  'VGRI11_2026-10-07': 0.0750,
-  'VGRI11_2026-09-08': 0.0750,
-  'VGRI11_2026-08-07': 0.0750,
-  'VGRI11_2026-07-07': 0.0750,
-  'VGRI11_2026-06-08': 0.0750,
-  'VGRI11_2026-05-08': 0.0750,
-  'VGRI11_2026-04-08': 0.0750,
-  'VGRI11_2026-03-06': 0.1200,
-  'VGRI11_2026-02-06': 0.1200,
-
-  // LIFE11
   'LIFE11_2026-11-09': 0.1150,
-  'LIFE11_2026-10-07': 0.1150,
-  'LIFE11_2026-09-08': 0.1150,
-  'LIFE11_2026-08-07': 0.1150,
-  'LIFE11_2026-07-07': 0.1200,
-  'LIFE11_2026-06-08': 0.1200,
-  'LIFE11_2026-05-08': 0.1200,
-  'LIFE11_2026-04-08': 0.1200,
-  'LIFE11_2026-03-06': 0.1200,
-  'LIFE11_2026-02-06': 0.1200,
-
-  // GARE11
   'GARE11_2026-11-09': 0.0830,
-  'GARE11_2026-10-07': 0.0830,
-  'GARE11_2026-09-08': 0.0830,
-  'GARE11_2026-08-07': 0.0830,
-  'GARE11_2026-07-07': 0.0830,
-  'GARE11_2026-06-08': 0.0830,
-  'GARE11_2026-05-08': 0.0830,
-  'GARE11_2026-04-08': 0.0830,
-  'GARE11_2026-03-06': 0.0830,
-  'GARE11_2026-02-06': 0.0830,
-
-  // ARRI11
   'ARRI11_2026-11-09': 0.0500,
-  'ARRI11_2026-10-07': 0.0500,
-  'ARRI11_2026-09-08': 0.0500,
-  'ARRI11_2026-08-07': 0.0700,
-  'ARRI11_2026-07-07': 0.0700,
-  'ARRI11_2026-06-08': 0.0700,
-  'ARRI11_2026-05-08': 0.0700,
-  'ARRI11_2026-04-08': 0.0700,
-  'ARRI11_2026-03-06': 0.0900,
-  'ARRI11_2026-02-06': 0.0900,
 }
 
 // Proporções de custódia mista confirmadas
@@ -212,6 +191,7 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
   for (const d of dividendos) {
     const ticker = String(d.ticker || '').toUpperCase().trim()
     const dataRef = String(d.data_ex || d.data_pagamento || '').slice(0, 10)
+    const dataPagISO = String(d.data_pagamento || '').slice(0, 10)
     const corrIdAtual = d.corretora_id ? String(d.corretora_id) : null
 
     let corretoraAtribuida = null
@@ -426,7 +406,9 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
     const objCorretora = corretoraAtribuida ? mapaCorretoras.get(String(corretoraAtribuida)) : null
 
     // Verifica se há calibração de precisão histórica (unitário e valor total para meses anteriores)
-    const unitHist = HISTORICO_UNITARIO_PRECISAO[`${ticker}_${dataPagISO}`]
+    // Conforme especificado, a validação de precisão histórica aplica-se EXCLUSIVAMENTE a Fundos Imobiliários e Fiagros
+    const ehFII = ehFundoImobiliario(ticker)
+    const unitHist = ehFII ? HISTORICO_UNITARIO_PRECISAO[`${ticker}_${dataPagISO}`] : null
     let valorFinal = d.valor
     let valorUnitFinal = d.valor_unitario
 
@@ -446,7 +428,7 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
         corretora_anterior: corrIdAtual ? mapaCorretoras.get(String(corrIdAtual))?.nome || corrIdAtual : 'Sem Corretora',
         corretora_correta: objCorretora?.nome || corretoraAtribuida,
         corretora_id_novo: idNum,
-        motivo: `Calibração histórica: unitário ajustado de ${d.valor_unitario} para ${unitHist}`,
+        motivo: `Calibração histórica FII: unitário ajustado de ${d.valor_unitario} para ${unitHist}`,
       })
     } else if (String(corrIdAtual) !== String(corretoraAtribuida)) {
       divergencias.push({
