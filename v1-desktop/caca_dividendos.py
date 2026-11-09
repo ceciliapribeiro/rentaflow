@@ -294,12 +294,67 @@ def obter_proventos_status_invest(ticker, tipo_ativo):
     return proventos
 
 
+def obter_proventos_investidor10(ticker, tipo_ativo):
+    """Fonte primária de alta precisão: Investidor 10 (até 8 casas decimais sem arredondamento)."""
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    eh_fii  = tipo_ativo and str(tipo_ativo).strip().upper() == 'FII'
+    endpoint = 'fiis' if eh_fii else 'acoes'
+    url = f"https://investidor10.com.br/{endpoint}/{ticker.lower()}/"
+
+    try:
+        req = requests.get(url, headers=headers, timeout=10)
+        if req.status_code != 200:
+            return []
+    except Exception:
+        return []
+
+    import re
+    table_match = re.search(r'<table[^>]*id="table-dividends-history"[^>]*>[\s\S]*?</table>', req.text, re.I) or \
+                  re.search(r'<table[^>]*>[\s\S]*?</table>', req.text, re.I)
+    if not table_match:
+        return []
+
+    proventos = []
+    rows = re.findall(r'<tr[^>]*>[\s\S]*?</tr>', table_match.group(0), re.I)
+    for r in rows:
+        cols = [re.sub(r'<[^>]+>', '', c).strip() for c in re.findall(r'<td[^>]*>([\s\S]*?)</td>', r, re.I)]
+        if len(cols) >= 4:
+            tipo_raw = cols[0]
+            data_ex_str = cols[1]
+            data_pag_str = cols[2]
+            valor_str = cols[3]
+
+            if not data_pag_str or data_pag_str == '-' or not data_ex_str or data_ex_str == '-':
+                continue
+            try:
+                data_ex = datetime.strptime(data_ex_str, '%d/%m/%Y')
+                data_pag = datetime.strptime(data_pag_str, '%d/%m/%Y')
+                valor = float(valor_str.replace('.', '').replace(',', '.'))
+                if valor <= 0:
+                    continue
+                proventos.append({
+                    'data_ex': data_ex,
+                    'data_pagamento': data_pag,
+                    'valor': valor,
+                    'tipo': _tipo_para_desc(tipo_raw),
+                })
+            except Exception:
+                continue
+
+    return proventos
+
+
 def obter_proventos(ticker, tipo_ativo, log_cb=None):
     """
-    Busca proventos usando Fundamentus como fonte primária (dados B3 diretos)
-    e Status Invest como fallback.
+    Busca proventos usando Investidor 10 como fonte primária (alta precisão de 4 a 8 casas),
+    com fallbacks para Fundamentus e Status Invest.
     """
-    proventos = obter_proventos_fundamentus(ticker, tipo_ativo)
+    proventos = obter_proventos_investidor10(ticker, tipo_ativo)
+
+    if not proventos:
+        if log_cb:
+            log_cb(f'  [AVISO] {ticker}: Investidor 10 sem dados — tentando Fundamentus...', 'aviso')
+        proventos = obter_proventos_fundamentus(ticker, tipo_ativo)
 
     if not proventos:
         if log_cb:

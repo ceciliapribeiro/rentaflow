@@ -169,6 +169,82 @@ function parseValorBR(s: string): number {
 }
 
 // ───────────────────────────────────────────────────────────
+// 3.5) INVESTIDOR 10 — fonte primária de alta precisão (4 a 8 casas decimais)
+// ───────────────────────────────────────────────────────────
+async function buscarInvestidor10(
+  ticker: string,
+  ehFII: boolean,
+): Promise<Provento[]> {
+  const headers = {
+    'User-Agent': UA,
+    'Accept': 'text/html,application/xhtml+xml',
+    'Accept-Language': 'pt-BR,pt;q=0.9',
+  }
+
+  const endpoint = ehFII ? 'fiis' : 'acoes'
+  const url = `https://investidor10.com.br/${endpoint}/${ticker.toLowerCase()}/`
+
+  let html = ''
+  for (let tentativa = 0; tentativa < 3; tentativa++) {
+    try {
+      const r = await fetch(url, { headers })
+      if (r.ok) {
+        html = await r.text()
+        break
+      }
+      if (tentativa < 2) {
+        await new Promise(rs => setTimeout(rs, 2000 * (tentativa + 1)))
+      }
+    } catch {
+      if (tentativa < 2) {
+        await new Promise(rs => setTimeout(rs, 2000 * (tentativa + 1)))
+      }
+    }
+  }
+
+  if (!html) return []
+
+  const tableMatch = html.match(/<table[^>]*id="table-dividends-history"[^>]*>[\s\S]*?<\/table>/i) ||
+                     html.match(/<table[^>]*>[\s\S]*?<\/table>/gi)
+
+  if (!tableMatch) return []
+
+  const proventos: Provento[] = []
+
+  for (const table of tableMatch) {
+    const rows = table.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || []
+    for (const row of rows) {
+      const cols = (row.match(/<td[^>]*>([\s\S]*?)<\/td>/gi) || []).map(c => c.replace(/<[^>]+>/g, '').trim())
+      // Investidor10 FIIs e Ações: [Tipo, DataCom/EX, DataPagamento, Valor]
+      if (cols.length >= 4) {
+        const tipoRaw = cols[0]
+        const dataExStr = cols[1]
+        const dataPagStr = cols[2]
+        const valorStr = cols[3]
+
+        if (!dataPagStr || dataPagStr === '-' || !dataExStr || dataExStr === '-') continue
+
+        const dataEx = parseDataBR(dataExStr)
+        const dataPag = parseDataBR(dataPagStr)
+        const valor = parseValorBR(valorStr)
+
+        if (!dataEx || !dataPag || valor <= 0) continue
+
+        proventos.push({
+          data_ex: dataEx,
+          data_pagamento: dataPag,
+          valor_unitario: valor,
+          tipo: tipoParaDesc(tipoRaw),
+        })
+      }
+    }
+    if (proventos.length > 0) break
+  }
+
+  return proventos
+}
+
+// ───────────────────────────────────────────────────────────
 // 4) FUNDAMENTUS — fonte primária (mesma lógica do desktop)
 // ───────────────────────────────────────────────────────────
 async function buscarFundamentus(
@@ -326,22 +402,28 @@ async function buscarStatusInvestProventos(
 }
 
 // ───────────────────────────────────────────────────────────
-// 6) COMBINADOR — Fundamentus → Status Invest fallback
+// 6) COMBINADOR — Investidor 10 (alta precisão) → Status Invest → Fundamentus
 // ───────────────────────────────────────────────────────────
 async function buscarProventos(
   ticker: string,
   ehFII: boolean,
-): Promise<{ proventos: Provento[]; fonte: 'Fundamentus' | 'StatusInvest' | 'nenhuma' }> {
-  // Tenta Fundamentus primeiro
-  const fundamentus = await buscarFundamentus(ticker, ehFII)
-  if (fundamentus.length > 0) {
-    return { proventos: fundamentus, fonte: 'Fundamentus' }
+): Promise<{ proventos: Provento[]; fonte: 'Investidor10' | 'StatusInvest' | 'Fundamentus' | 'nenhuma' }> {
+  // 1) Tenta Investidor 10 primeiro (valores com até 8 casas decimais sem arredondamento)
+  const i10 = await buscarInvestidor10(ticker, ehFII)
+  if (i10.length > 0) {
+    return { proventos: i10, fonte: 'Investidor10' }
   }
 
-  // Fallback para Status Invest
+  // 2) Tenta Status Invest
   const statusInvest = await buscarStatusInvestProventos(ticker, ehFII)
   if (statusInvest.length > 0) {
     return { proventos: statusInvest, fonte: 'StatusInvest' }
+  }
+
+  // 3) Fallback para Fundamentus
+  const fundamentus = await buscarFundamentus(ticker, ehFII)
+  if (fundamentus.length > 0) {
+    return { proventos: fundamentus, fonte: 'Fundamentus' }
   }
 
   return { proventos: [], fonte: 'nenhuma' }
