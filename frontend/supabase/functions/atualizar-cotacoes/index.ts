@@ -35,13 +35,34 @@ interface AtivoData {
   erro?: string
 }
 
-// Heurística: ticker termina em "11" com 6 chars = FII (provavelmente)
+// Units de ações negociadas com final 11 que não são FIIs nem Fiagros
+const UNITS_ACOES = new Set([
+  'TAEE11', 'SAPR11', 'KLBN11', 'ALUP11', 'SANB11', 'TIET11',
+  'BPAC11', 'ENGI11', 'CPLE11', 'SULA11', 'BIDI11'
+])
+
+// Fiagros conhecidos (no Status Invest ficam em /fiagros/)
+const FIAGROS = new Set([
+  'SNAG11', 'VGIA11', 'KNCA11', 'RURA11', 'AAZQ11', 'XPCA11',
+  'FGAA11', 'EGAF11', 'OIAG11', 'RZAG11', 'CPTR11', 'BTAL11',
+  'BBGO11', 'DCRA11', 'GCRA11', 'AGRX11', 'JGPX11', 'PLCA11',
+  'SNCI11', 'IAAG11', 'KNPK11', 'BODB11', 'MANA11', 'YUFI11'
+])
+
+// Heurística: ticker termina em "11" com 6 chars = FII / Fiagro (exceto units de ações)
 function ehFII(ticker: string): boolean {
-  return ticker.length === 6 && ticker.endsWith('11')
+  const up = ticker.toUpperCase()
+  if (UNITS_ACOES.has(up)) return false
+  return (up.length === 6 && up.endsWith('11')) || FIAGROS.has(up)
+}
+
+function ehFiagro(ticker: string): boolean {
+  return FIAGROS.has(ticker.toUpperCase())
 }
 
 function ehBDR(ticker: string): boolean {
-  return ticker.endsWith('34') || ticker.endsWith('35') || ticker.endsWith('39')
+  const up = ticker.toUpperCase()
+  return up.endsWith('34') || up.endsWith('35') || up.endsWith('39')
 }
 
 // Converte "1,23" ou "12,34%" → 1.23
@@ -53,18 +74,11 @@ function parseNumeroBR(txt: string): number {
 }
 
 // ───────────────────────────────────────────────────────────
-// 1) STATUS INVEST — DY, P/VP e Preço (Ações, BDRs e FIIs)
+// 1) STATUS INVEST — DY, P/VP e Preço (Ações, BDRs, FIIs e Fiagros)
 // ───────────────────────────────────────────────────────────
-async function buscarStatusInvest(ticker: string): Promise<Partial<AtivoData>> {
+async function extrairStatusInvestUrl(url: string): Promise<Partial<AtivoData>> {
   const out: Partial<AtivoData> = {}
   try {
-    let endpoint = 'acoes'
-    if (ehFII(ticker)) {
-      endpoint = 'fundos-imobiliarios'
-    } else if (ehBDR(ticker)) {
-      endpoint = 'bdrs'
-    }
-    const url = `https://statusinvest.com.br/${endpoint}/${ticker.toLowerCase()}`
     const r = await fetch(url, {
       headers: {
         'User-Agent': UA,
@@ -93,7 +107,7 @@ async function buscarStatusInvest(ticker: string): Promise<Partial<AtivoData>> {
       }
     }
 
-    // DY — busca por padrões "Dividend Yield" seguidos de valor
+    // DY — busca por padrões "Dividend Yield" seguidos de valor anual
     const dyMatches = [
       /title="Dividend Yield[^"]*"[\s\S]*?<strong[^>]*class="[^"]*value[^"]*"[^>]*>([\d,\.]+)/i,
       /["']?Dividend Yield["']?[^<]{0,80}?(\d{1,3}[,\.]\d{1,4})/i,
@@ -133,6 +147,33 @@ async function buscarStatusInvest(ticker: string): Promise<Partial<AtivoData>> {
     return out
   } catch {
     return out
+  }
+}
+
+async function buscarStatusInvest(ticker: string): Promise<Partial<AtivoData>> {
+  try {
+    const t = ticker.toLowerCase()
+    let endpoints: string[] = ['acoes']
+    if (ehFiagro(ticker)) {
+      // Fiagros no Status Invest ficam sob /fiagros/
+      endpoints = ['fiagros', 'fundos-imobiliarios', 'acoes']
+    } else if (ehFII(ticker)) {
+      // FIIs tradicionais sob /fundos-imobiliarios/
+      endpoints = ['fundos-imobiliarios', 'fiagros', 'acoes']
+    } else if (ehBDR(ticker)) {
+      endpoints = ['bdrs', 'acoes']
+    }
+
+    for (const ep of endpoints) {
+      const url = `https://statusinvest.com.br/${ep}/${t}`
+      const dados = await extrairStatusInvestUrl(url)
+      if (dados.dy || dados.pvp || dados.preco) {
+        return dados
+      }
+    }
+    return {}
+  } catch {
+    return {}
   }
 }
 
@@ -197,7 +238,7 @@ async function buscarFundamentus(ticker: string): Promise<Partial<AtivoData>> {
 }
 
 // ───────────────────────────────────────────────────────────
-// 3) FUNDSEXPLORER — fallback para FIIs (scraping HTML)
+// 3) FUNDSEXPLORER — fallback para FIIs e Fiagros (scraping HTML e JSON)
 // ───────────────────────────────────────────────────────────
 async function buscarFundsexplorer(ticker: string): Promise<Partial<AtivoData>> {
   const out: Partial<AtivoData> = {}
@@ -214,37 +255,58 @@ async function buscarFundsexplorer(ticker: string): Promise<Partial<AtivoData>> 
 
     const html = await r.text()
 
-    // DY anual no Fundsexplorer (procura "Dividend Yield" e variações)
-    const dyMatches = [
-      /Dividend Yield[\s\S]{0,200}?(\d{1,3}[,\.]\d{1,4})\s*%/i,
-      /"dividendYield"[^:]*:\s*"?(\d{1,3}[,\.]\d{1,4})/i,
-      /DY[^<]{0,100}?(\d{1,3}[,\.]\d{1,4})\s*%/i,
-    ]
-    for (const re of dyMatches) {
-      const m = html.match(re)
-      if (m && m[1]) {
-        const dy = parseNumeroBR(m[1])
-        if (dy > 0 && dy < 100) {
-          out.dy = dy
-          out.fonteDy = 'Fundsexplorer'
-          break
+    // 1) JSON "dy" anual (evita capturar o rendimento mensal de 1,2% como se fosse anual)
+    const mJsonDy = html.match(/"dy"\s*:\s*(\d+(?:\.\d+)?)/i)
+    if (mJsonDy && mJsonDy[1]) {
+      const v = parseFloat(mJsonDy[1])
+      if (v > 0 && v < 100) {
+        out.dy = Number(v.toFixed(2))
+        out.fonteDy = 'Fundsexplorer'
+      }
+    }
+
+    // 2) HTML regex para DY anual dos últimos 12 meses caso não esteja no JSON
+    if (!out.dy) {
+      const dyMatches = [
+        /Dividend Yield[\s\S]{0,200}?(\d{1,3}[,\.]\d{1,4})(?:<[^>]+>|\s)*%(?:[\s\S]{0,100}?(?:12\s*meses|ano))?/i,
+        /DY[\s\S]{0,100}?(\d{1,3}[,\.]\d{1,4})(?:<[^>]+>|\s)*%/i,
+      ]
+      for (const re of dyMatches) {
+        const m = html.match(re)
+        if (m && m[1]) {
+          const dy = parseNumeroBR(m[1])
+          if (dy > 0 && dy < 100) {
+            out.dy = dy
+            out.fonteDy = 'Fundsexplorer'
+            break
+          }
         }
       }
     }
 
-    // P/VP no Fundsexplorer
-    const pvpMatches = [
-      /P\/VP[\s\S]{0,200}?(\d{1,3}[,\.]\d{1,4})/i,
-      /"pvp"[^:]*:\s*"?(\d{1,3}[,\.]\d{1,4})/i,
-    ]
-    for (const re of pvpMatches) {
-      const m = html.match(re)
-      if (m && m[1]) {
-        const pvp = parseNumeroBR(m[1])
-        if (pvp > 0 && pvp < 50) {
-          out.pvp = pvp
-          out.fontePvp = 'Fundsexplorer'
-          break
+    // P/VP no Fundsexplorer: primeiro do JSON, depois HTML
+    const mJsonPvp = html.match(/"pvp"\s*:\s*(\d+(?:\.\d+)?)/i)
+    if (mJsonPvp && mJsonPvp[1]) {
+      const v = parseFloat(mJsonPvp[1])
+      if (v > 0 && v < 50) {
+        out.pvp = Number(v.toFixed(2))
+        out.fontePvp = 'Fundsexplorer'
+      }
+    }
+
+    if (!out.pvp) {
+      const pvpMatches = [
+        /P\/VP[\s\S]{0,200}?(\d{1,3}[,\.]\d{1,4})/i,
+      ]
+      for (const re of pvpMatches) {
+        const m = html.match(re)
+        if (m && m[1]) {
+          const pvp = parseNumeroBR(m[1])
+          if (pvp > 0 && pvp < 50) {
+            out.pvp = pvp
+            out.fontePvp = 'Fundsexplorer'
+            break
+          }
         }
       }
     }
@@ -337,7 +399,7 @@ async function buscarYahoo(ticker: string): Promise<Partial<AtivoData>> {
 }
 
 // ───────────────────────────────────────────────────────────
-// 6) COMBINADOR INTELIGENTE — FIIs e Ações com suporte a DY e P/VP
+// 6) COMBINADOR INTELIGENTE — FIIs, Fiagros e Ações com suporte a DY e P/VP
 // ───────────────────────────────────────────────────────────
 async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData> {
   const fii = ehFII(ticker)
@@ -370,26 +432,23 @@ async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData
     }
   }
 
-  // DY: StatusInvest -> Fundamentus -> Brapi
-  let dy = statusInvest.dy || fundamentus.dy || brapi.dy
-  let fonteDy = statusInvest.dy ? statusInvest.fonteDy : (fundamentus.dy ? fundamentus.fonteDy : brapi.fonteDy)
-
-  // P/VP: StatusInvest -> Fundamentus -> Brapi
-  let pvp = statusInvest.pvp || fundamentus.pvp || brapi.pvp
-  let fontePvp = statusInvest.pvp ? statusInvest.fontePvp : (fundamentus.pvp ? fundamentus.fontePvp : brapi.fontePvp)
-
-  // Se for FII e ainda faltar DY ou PVP, tenta Fundsexplorer
-  if (fii && ((!dy || dy <= 0) || (!pvp || pvp <= 0))) {
-    const fe = await buscarFundsexplorer(ticker)
-    if ((!dy || dy <= 0) && fe.dy && fe.dy > 0) {
-      dy = fe.dy
-      fonteDy = 'Fundsexplorer'
-    }
-    if ((!pvp || pvp <= 0) && fe.pvp && fe.pvp > 0) {
-      pvp = fe.pvp
-      fontePvp = 'Fundsexplorer'
-    }
+  // Se for FII/Fiagro e faltar DY ou PVP em StatusInvest, consulta Fundsexplorer
+  let feData: Partial<AtivoData> = {}
+  if (fii && ((!statusInvest.dy || statusInvest.dy <= 0) || (!statusInvest.pvp || statusInvest.pvp <= 0))) {
+    feData = await buscarFundsexplorer(ticker)
   }
+
+  // DY: StatusInvest -> (se FII/Fiagro: Fundsexplorer) -> Fundamentus -> Brapi
+  let dy = statusInvest.dy || (fii ? feData.dy : undefined) || fundamentus.dy || brapi.dy || feData.dy
+  let fonteDy = statusInvest.dy
+    ? statusInvest.fonteDy
+    : (fii && feData.dy ? feData.fonteDy : (fundamentus.dy ? fundamentus.fonteDy : (brapi.dy ? brapi.fonteDy : feData.fonteDy)))
+
+  // P/VP: StatusInvest -> (se FII/Fiagro: Fundsexplorer) -> Fundamentus -> Brapi
+  let pvp = statusInvest.pvp || (fii ? feData.pvp : undefined) || fundamentus.pvp || brapi.pvp || feData.pvp
+  let fontePvp = statusInvest.pvp
+    ? statusInvest.fontePvp
+    : (fii && feData.pvp ? feData.fontePvp : (fundamentus.pvp ? fundamentus.fontePvp : (brapi.pvp ? brapi.fontePvp : feData.fontePvp)))
 
   const razao_social = brapi.razao_social || fundamentus.razao_social || undefined
 

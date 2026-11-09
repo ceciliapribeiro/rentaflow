@@ -145,6 +145,8 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
 
   const divergencias = []
   const dividendosNormalizados = []
+  // Registros que precisam ser divididos: { original, novosPedacos[] }
+  const divisoes = []
 
   for (const d of dividendos) {
     const ticker = String(d.ticker || '').toUpperCase().trim()
@@ -185,10 +187,102 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
         corretoraAtribuida = comCustodia[0].cId
         motivo = `Custódia positiva (${comCustodia[0].qtde}) apenas nesta corretora na data ${dataRef}`
       } else if (comCustodia.length > 1) {
-        // Mais de uma corretora com custódia: tenta conferir se d.quantidade bate com alguma das corretoras
-        const qtdeDiv = Number(d.quantidade) || 0
+        // Mais de uma corretora com custódia na data
+        let qtdeDiv = Number(d.quantidade) || 0
+        const valorTotal = Number(d.valor) || 0
+        const valorUnit = Number(d.valor_unitario) || (qtdeDiv > 0 ? valorTotal / qtdeDiv : 0)
+        if (qtdeDiv <= 0 && valorUnit > 0 && valorTotal > 0) {
+          qtdeDiv = Math.round(valorTotal / valorUnit)
+        }
+
+        const totalCustodia = comCustodia.reduce((s, c) => s + c.qtde, 0)
         const matchQtde = comCustodia.find(c => Math.abs(c.qtde - qtdeDiv) < 0.001)
-        if (matchQtde) {
+
+        // Verifica se a quantidade do dividendo cobre todas as corretoras
+        // (indica que o provento foi registrado consolidado e precisa ser dividido entre as corretoras)
+        const ehConsolidado = comCustodia.length > 1 && (
+          Math.abs(totalCustodia - qtdeDiv) < 0.01 ||
+          (qtdeDiv >= totalCustodia * 0.99 && qtdeDiv <= totalCustodia * 1.01) ||
+          (corrIdAtual && comCustodia.some(c => String(c.cId) === String(corrIdAtual) && qtdeDiv > c.qtde + 0.01))
+        )
+
+        if (ehConsolidado) {
+          // ─── DIVIDIR o registro: criar um por corretora proporcional à custódia ───
+          const unitFinal = valorUnit || (totalCustodia > 0 ? valorTotal / totalCustodia : 0)
+          const baseTipo = String(d.tipo_provento || 'RENDIMENTO').replace(/\s*\([^)]*\)/g, '').trim()
+
+          // Ordena para que a corretora atual (se fizer parte da custódia) seja a primeira,
+          // preservando o registro original nela e criando os novos nas demais
+          const listaCustodiasOrdenada = [...comCustodia].sort((a, b) => {
+            if (corrIdAtual) {
+              if (String(a.cId) === String(corrIdAtual)) return -1
+              if (String(b.cId) === String(corrIdAtual)) return 1
+            }
+            return b.qtde - a.qtde
+          })
+
+          const pedacos = []
+          for (let idx = 0; idx < listaCustodiasOrdenada.length; idx++) {
+            const item = listaCustodiasOrdenada[idx]
+            const valorPedaco = Math.round(item.qtde * unitFinal * 100) / 100
+            const cIdNum = parseInt(item.cId, 10)
+            const objCorr = mapaCorretoras.get(String(item.cId))
+            const nomeCorr = objCorr?.nome || `Corretora #${item.cId}`
+
+            // Para evitar violar constraints unique no banco, registros adicionais levam o sufixo da corretora
+            const tipoProventoPedaco = idx === 0 ? baseTipo : `${baseTipo} (${nomeCorr})`
+
+            pedacos.push({
+              corretora_id: cIdNum,
+              quantidade: item.qtde,
+              valor: valorPedaco,
+              valor_unitario: unitFinal,
+              tipo_provento: tipoProventoPedaco,
+              objCorretora: objCorr,
+            })
+          }
+
+          divisoes.push({ original: d, pedacos })
+
+          // Emite os registros normalizados para a interface (um por corretora)
+          for (let idx = 0; idx < pedacos.length; idx++) {
+            const pedaco = pedacos[idx]
+            dividendosNormalizados.push({
+              ...d,
+              // O primeiro pedaço mantém o id original; os demais ganham IDs virtuais estáveis
+              id: idx === 0 ? d.id : -(Number(d.id || 1) * 1000 + idx),
+              corretora_id: pedaco.corretora_id,
+              quantidade: pedaco.quantidade,
+              valor: pedaco.valor,
+              valor_unitario: pedaco.valor_unitario,
+              tipo_provento: pedaco.tipo_provento,
+              corretoras: pedaco.objCorretora
+                ? { id: pedaco.objCorretora.id, nome: pedaco.objCorretora.nome, cor: pedaco.objCorretora.cor }
+                : d.corretoras,
+            })
+          }
+
+          // Registra divergência para sincronizar no banco
+          const nomesCorrs = pedacos.map(p => {
+            const nome = p.objCorretora?.nome || p.corretora_id
+            return `${nome}: ${p.quantidade} cotas = R$ ${p.valor.toFixed(2)}`
+          }).join(' / ')
+
+          divergencias.push({
+            id: d.id,
+            ticker,
+            data_pagamento: d.data_pagamento,
+            valor: d.valor,
+            corretora_anterior: corrIdAtual ? mapaCorretoras.get(String(corrIdAtual))?.nome || corrIdAtual : 'Sem Corretora',
+            corretora_correta: `Dividido: ${nomesCorrs}`,
+            corretora_id_novo: pedacos[0].corretora_id,
+            motivo: `Dividendo consolidado (${qtdeDiv} cotas) dividido entre ${comCustodia.length} corretoras pela custódia real na data`,
+            tipo: 'divisao',
+            pedacos,
+          })
+
+          continue // Pula o fluxo normal (push já feito para os pedaços)
+        } else if (matchQtde) {
           corretoraAtribuida = matchQtde.cId
           motivo = `Quantidade de provento (${qtdeDiv}) bate com a custódia da corretora`
         } else {
@@ -282,9 +376,13 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
     let atualizados = 0
     let erros = 0
 
-    // Atualiza em lotes por corretora de destino
+    // Separa divergências normais (reatribuição) das divisões
+    const reatribuicoes = divergencias.filter(d => d.tipo !== 'divisao')
+    const divsDivisao = divergencias.filter(d => d.tipo === 'divisao')
+
+    // 1. Reatribuições simples: atualiza corretora_id em lote
     const porDestino = new Map()
-    for (const div of divergencias) {
+    for (const div of reatribuicoes) {
       if (!div.id) continue
       const cId = div.corretora_id_novo
       if (!porDestino.has(cId)) porDestino.set(cId, [])
@@ -307,6 +405,80 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
       } catch (err) {
         console.error('Falha ao persistir reatribuição de dividendos:', err)
         erros += ids.length
+      }
+    }
+
+    // 2. Divisões: atualiza o registro original (primeiro pedaço) e insere os demais
+    for (const div of divsDivisao) {
+      if (!div.id || !div.pedacos || div.pedacos.length < 2) continue
+      const originalId = div.id
+
+      try {
+        // Busca o registro original para copiar todos os campos
+        const { data: original, error: fetchErr } = await supabase
+          .from('dividendos')
+          .select('*')
+          .eq('id', originalId)
+          .single()
+
+        if (fetchErr || !original) {
+          console.error(`Erro ao buscar dividendo original ${originalId}:`, fetchErr)
+          erros++
+          continue
+        }
+
+        // Atualiza o registro original com os dados do primeiro pedaço
+        const primeiroPedaco = div.pedacos[0]
+        const { error: updErr } = await supabase
+          .from('dividendos')
+          .update({
+            corretora_id: primeiroPedaco.corretora_id,
+            quantidade: primeiroPedaco.quantidade,
+            valor: primeiroPedaco.valor,
+            valor_unitario: primeiroPedaco.valor_unitario,
+          })
+          .eq('id', originalId)
+
+        if (updErr) {
+          console.error(`Erro ao atualizar dividendo ${originalId} (primeiro pedaço):`, updErr)
+          erros++
+          continue
+        }
+        atualizados++
+
+        // Insere os pedaços restantes como novos registros
+        for (let i = 1; i < div.pedacos.length; i++) {
+          const pedaco = div.pedacos[i]
+          const novoRegistro = {
+            user_id: original.user_id,
+            ticker: original.ticker,
+            ano: original.ano,
+            data_pagamento: original.data_pagamento,
+            data_ex: original.data_ex,
+            valor: pedaco.valor,
+            valor_unitario: pedaco.valor_unitario,
+            quantidade: pedaco.quantidade,
+            tipo_provento: pedaco.tipo_provento,
+            fonte: original.fonte,
+            corretora_id: pedaco.corretora_id,
+          }
+
+          const { error: insErr } = await supabase
+            .from('dividendos')
+            .insert(novoRegistro)
+
+          if (insErr) {
+            console.error(`Erro ao inserir pedaço ${i + 1} do dividendo ${originalId}:`, insErr)
+            erros++
+          } else {
+            atualizados++
+          }
+        }
+
+        console.log(`[RentaFlow] ✂️ Dividendo ${originalId} (${original.ticker}) dividido em ${div.pedacos.length} registros`)
+      } catch (err) {
+        console.error(`Falha ao dividir dividendo ${originalId}:`, err)
+        erros++
       }
     }
 
