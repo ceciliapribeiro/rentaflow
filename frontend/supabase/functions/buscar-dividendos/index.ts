@@ -53,9 +53,10 @@ interface Snapshot {
 interface ResultadoTicker {
   ticker: string
   novos: number
+  atualizados?: number
   ignorados_sem_custodia: number
   duplicados: number
-  fonte: 'Fundamentus' | 'StatusInvest' | 'nenhuma'
+  fonte: 'Investidor10' | 'Fundamentus' | 'StatusInvest' | 'nenhuma'
   erro?: string
 }
 
@@ -466,7 +467,7 @@ async function processarTicker(
   userId: string,
   ticker: string,
   snapshotsPorCorretora: Map<number | null, Snapshot[]>,
-  existentesPorTicker: Map<string, Set<string>>,
+  mapaExistentesPorTicker: Map<string, Map<string, any>>,
   inicioBusca: Date,
   hojeLimite: Date,
   defaultCorretoraId: number | null = null,
@@ -475,6 +476,7 @@ async function processarTicker(
   const resultado: ResultadoTicker = {
     ticker,
     novos: 0,
+    atualizados: 0,
     ignorados_sem_custodia: 0,
     duplicados: 0,
     fonte: 'nenhuma',
@@ -491,7 +493,7 @@ async function processarTicker(
       return resultado
     }
 
-    const chavesExistentes = existentesPorTicker.get(ticker) || new Set<string>()
+    const mapaExistentes = mapaExistentesPorTicker.get(ticker) || new Map<string, any>()
     const novosRegistros: any[] = []
 
     for (const prov of proventos) {
@@ -541,8 +543,23 @@ async function processarTicker(
 
         const chave = `${dataPagISO}_${prov.tipo.toUpperCase()}_${targetCorrId ? String(targetCorrId) : 'null'}`
         const chaveFinal = `${dataPagISO}_${tipoFinal.toUpperCase()}_${targetCorrId ? String(targetCorrId) : 'null'}`
-        if (chavesExistentes.has(chave) || chavesExistentes.has(chaveFinal)) {
-          resultado.duplicados += 1
+
+        const regExistente = mapaExistentes.get(chave) || mapaExistentes.get(chaveFinal)
+        if (regExistente) {
+          // Se já existe, verifica se o valor unitário pode ser calibrado com a alta precisão
+          const unitExistente = Number(regExistente.valor_unitario) || 0
+          if (Math.abs(unitExistente - prov.valor_unitario) > 0.0001 && prov.valor_unitario > 0) {
+            const qtdeExistente = Number(regExistente.quantidade) || item.qtde
+            const novoValor = Math.round(qtdeExistente * prov.valor_unitario * 100) / 100
+            await supabase.from('dividendos').update({
+              valor_unitario: prov.valor_unitario,
+              valor: novoValor,
+              fonte,
+            }).eq('id', regExistente.id)
+            resultado.atualizados = (resultado.atualizados || 0) + 1
+          } else {
+            resultado.duplicados += 1
+          }
           continue
         }
 
@@ -562,8 +579,8 @@ async function processarTicker(
           corretora_id: targetCorrId,
         })
 
-        chavesExistentes.add(chave)
-        chavesExistentes.add(chaveFinal)
+        mapaExistentes.set(chave, { valor_unitario: prov.valor_unitario, quantidade: item.qtde })
+        mapaExistentes.set(chaveFinal, { valor_unitario: prov.valor_unitario, quantidade: item.qtde })
       }
     }
 
@@ -638,21 +655,21 @@ serve(async (req) => {
     const historico = construirHistoricoPosicoesPorCorretora(operacoes)
     const tickers = Array.from(historico.keys()).sort()
 
-    // 3) Carrega dividendos já registrados (dedup)
+    // 3) Carrega dividendos já registrados (dedup + recalibração de precisão)
     const { data: divsRaw } = await supabase
       .from('dividendos')
-      .select('ticker, data_pagamento, tipo_provento, corretora_id')
+      .select('id, ticker, data_pagamento, tipo_provento, corretora_id, valor_unitario, quantidade, valor')
       .eq('user_id', userId)
 
-    const existentesPorTicker = new Map<string, Set<string>>()
+    const mapaExistentesPorTicker = new Map<string, Map<string, any>>()
     if (divsRaw) {
       for (const d of divsRaw) {
         const tk = String(d.ticker).toUpperCase()
-        if (!existentesPorTicker.has(tk)) existentesPorTicker.set(tk, new Set())
+        if (!mapaExistentesPorTicker.has(tk)) mapaExistentesPorTicker.set(tk, new Map())
         const dataISO = String(d.data_pagamento).slice(0, 10)
         const tipo = String(d.tipo_provento || 'RENDIMENTO').toUpperCase()
         const corr = d.corretora_id ? String(d.corretora_id) : 'null'
-        existentesPorTicker.get(tk)!.add(`${dataISO}_${tipo}_${corr}`)
+        mapaExistentesPorTicker.get(tk)!.set(`${dataISO}_${tipo}_${corr}`, d)
       }
     }
 
@@ -697,7 +714,7 @@ serve(async (req) => {
           processarTicker(
             supabase, userId, t,
             historico.get(t)!,
-            existentesPorTicker,
+            mapaExistentesPorTicker,
             inicioBusca, hojeLimite,
             defaultCorretoraId,
             mapaCorretoras,
@@ -714,11 +731,13 @@ serve(async (req) => {
 
     // 6) Estatísticas finais
     const totalNovos = resultados.reduce((s, r) => s + r.novos, 0)
+    const totalAtualizados = resultados.reduce((s, r) => s + (r.atualizados || 0), 0)
     const totalIgnorados = resultados.reduce((s, r) => s + r.ignorados_sem_custodia, 0)
     const totalDuplicados = resultados.reduce((s, r) => s + r.duplicados, 0)
     const tickersComErro = resultados.filter((r) => r.erro).length
 
     const fontes = {
+      investidor10: resultados.filter((r) => r.fonte === 'Investidor10').length,
       fundamentus: resultados.filter((r) => r.fonte === 'Fundamentus').length,
       statusinvest: resultados.filter((r) => r.fonte === 'StatusInvest').length,
       nenhuma: resultados.filter((r) => r.fonte === 'nenhuma').length,
@@ -727,6 +746,7 @@ serve(async (req) => {
     return jsonResponse({
       tickers_processados: resultados.length,
       novos_dividendos: totalNovos,
+      atualizados_precisao: totalAtualizados,
       ignorados_sem_custodia: totalIgnorados,
       duplicados: totalDuplicados,
       erros: tickersComErro,

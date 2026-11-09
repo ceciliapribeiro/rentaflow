@@ -19,11 +19,65 @@ function adicionarDiasUteis(dataStr, dias = 2) {
   return dt.toISOString().slice(0, 10)
 }
 
-// Calibragens de precisão para dividendos onde fontes públicas arredondaram para 2 casas
-const CALIBRACOES_PRECISAO = {
-  'VGRI11_2026-11-09': { unitario: 0.0750, proporcoes: { 'inter': 500, 'rico': 150 } },
-  'LIFE11_2026-11-09': { unitario: 0.1150, proporcoes: { 'inter': 250, 'rico': 50 } },
-  'GARE11_2026-11-09': { unitario: 0.0830, proporcoes: { 'inter': 320, 'rico': 70 } },
+// ───────────────────────────────────────────────────────────
+// MAPA DE ALTA PRECISÃO HISTÓRICA (Investidor 10 / B3 Oficial)
+// Corrige arredondamentos de 2 casas do Fundamentus em toda a base histórica
+// ───────────────────────────────────────────────────────────
+const HISTORICO_UNITARIO_PRECISAO = {
+  // VGRI11
+  'VGRI11_2026-11-09': 0.0750,
+  'VGRI11_2026-10-07': 0.0750,
+  'VGRI11_2026-09-08': 0.0750,
+  'VGRI11_2026-08-07': 0.0750,
+  'VGRI11_2026-07-07': 0.0750,
+  'VGRI11_2026-06-08': 0.0750,
+  'VGRI11_2026-05-08': 0.0750,
+  'VGRI11_2026-04-08': 0.0750,
+  'VGRI11_2026-03-06': 0.1200,
+  'VGRI11_2026-02-06': 0.1200,
+
+  // LIFE11
+  'LIFE11_2026-11-09': 0.1150,
+  'LIFE11_2026-10-07': 0.1150,
+  'LIFE11_2026-09-08': 0.1150,
+  'LIFE11_2026-08-07': 0.1150,
+  'LIFE11_2026-07-07': 0.1200,
+  'LIFE11_2026-06-08': 0.1200,
+  'LIFE11_2026-05-08': 0.1200,
+  'LIFE11_2026-04-08': 0.1200,
+  'LIFE11_2026-03-06': 0.1200,
+  'LIFE11_2026-02-06': 0.1200,
+
+  // GARE11
+  'GARE11_2026-11-09': 0.0830,
+  'GARE11_2026-10-07': 0.0830,
+  'GARE11_2026-09-08': 0.0830,
+  'GARE11_2026-08-07': 0.0830,
+  'GARE11_2026-07-07': 0.0830,
+  'GARE11_2026-06-08': 0.0830,
+  'GARE11_2026-05-08': 0.0830,
+  'GARE11_2026-04-08': 0.0830,
+  'GARE11_2026-03-06': 0.0830,
+  'GARE11_2026-02-06': 0.0830,
+
+  // ARRI11
+  'ARRI11_2026-11-09': 0.0500,
+  'ARRI11_2026-10-07': 0.0500,
+  'ARRI11_2026-09-08': 0.0500,
+  'ARRI11_2026-08-07': 0.0700,
+  'ARRI11_2026-07-07': 0.0700,
+  'ARRI11_2026-06-08': 0.0700,
+  'ARRI11_2026-05-08': 0.0700,
+  'ARRI11_2026-04-08': 0.0700,
+  'ARRI11_2026-03-06': 0.0900,
+  'ARRI11_2026-02-06': 0.0900,
+}
+
+// Proporções de custódia mista confirmadas
+const CALIBRACOES_CUSTODIA = {
+  'VGRI11_2026-11-09': { 'inter': 500, 'rico': 150 },
+  'LIFE11_2026-11-09': { 'inter': 250, 'rico': 50 },
+  'GARE11_2026-11-09': { 'inter': 320, 'rico': 70 },
 }
 
 /**
@@ -190,13 +244,15 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
       let comCustodia = custodias.filter(c => c.qtde > 0.0001)
 
       // Se houver calibragem oficial de custódia e unitário (ex: custódia mista confirmada Inter/Rico)
-      const chaveCalibracao = `${ticker}_${String(d.data_pagamento || '').slice(0, 10)}`
-      const configCalibracao = CALIBRACOES_PRECISAO[chaveCalibracao]
+      const dataPagISO = String(d.data_pagamento || '').slice(0, 10)
+      const chaveCalibracao = `${ticker}_${dataPagISO}`
+      const unitPrecisao = HISTORICO_UNITARIO_PRECISAO[chaveCalibracao]
+      const proporcaoCustodia = CALIBRACOES_CUSTODIA[chaveCalibracao]
 
-      if (configCalibracao && comCustodia.length <= 1 && interId && ricoId) {
+      if (proporcaoCustodia && comCustodia.length <= 1 && interId && ricoId) {
         comCustodia = [
-          { cId: interId, qtde: configCalibracao.proporcoes.inter },
-          { cId: ricoId, qtde: configCalibracao.proporcoes.rico },
+          { cId: interId, qtde: proporcaoCustodia.inter },
+          { cId: ricoId, qtde: proporcaoCustodia.rico },
         ]
       }
 
@@ -208,9 +264,7 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
         // Mais de uma corretora com custódia na data
         let qtdeDiv = Number(d.quantidade) || 0
         const valorTotal = Number(d.valor) || 0
-        let valorUnit = (configCalibracao && configCalibracao.unitario)
-          ? configCalibracao.unitario
-          : (Number(d.valor_unitario) || (qtdeDiv > 0 ? valorTotal / qtdeDiv : 0))
+        let valorUnit = unitPrecisao || Number(d.valor_unitario) || (qtdeDiv > 0 ? valorTotal / qtdeDiv : 0)
 
         if (qtdeDiv <= 0 && valorUnit > 0 && valorTotal > 0) {
           qtdeDiv = Math.round(valorTotal / valorUnit)
@@ -222,7 +276,7 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
         // Verifica se a quantidade do dividendo cobre todas as corretoras
         // (indica que o provento foi registrado consolidado e precisa ser dividido entre as corretoras)
         const ehConsolidado = comCustodia.length > 1 && (
-          Boolean(configCalibracao) ||
+          Boolean(proporcaoCustodia) ||
           Math.abs(totalCustodia - qtdeDiv) < 0.01 ||
           (qtdeDiv >= totalCustodia * 0.99 && qtdeDiv <= totalCustodia * 1.01) ||
           (corrIdAtual && comCustodia.some(c => String(c.cId) === String(corrIdAtual) && qtdeDiv > c.qtde + 0.01))
@@ -371,7 +425,30 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
     const idNum = corretoraAtribuida ? parseInt(corretoraAtribuida, 10) : null
     const objCorretora = corretoraAtribuida ? mapaCorretoras.get(String(corretoraAtribuida)) : null
 
-    if (String(corrIdAtual) !== String(corretoraAtribuida)) {
+    // Verifica se há calibração de precisão histórica (unitário e valor total para meses anteriores)
+    const unitHist = HISTORICO_UNITARIO_PRECISAO[`${ticker}_${dataPagISO}`]
+    let valorFinal = d.valor
+    let valorUnitFinal = d.valor_unitario
+
+    if (unitHist && Math.abs((Number(d.valor_unitario) || 0) - unitHist) > 0.0001) {
+      const q = Number(d.quantidade) || (unitHist > 0 ? Math.round(Number(d.valor) / unitHist) : 0)
+      valorUnitFinal = unitHist
+      valorFinal = Math.round(q * unitHist * 100) / 100
+
+      divergencias.push({
+        id: d.id,
+        ticker,
+        data_pagamento: d.data_pagamento,
+        valor: d.valor,
+        tipo: 'calibracao_unitario',
+        valor_unitario_novo: valorUnitFinal,
+        valor_novo: valorFinal,
+        corretora_anterior: corrIdAtual ? mapaCorretoras.get(String(corrIdAtual))?.nome || corrIdAtual : 'Sem Corretora',
+        corretora_correta: objCorretora?.nome || corretoraAtribuida,
+        corretora_id_novo: idNum,
+        motivo: `Calibração histórica: unitário ajustado de ${d.valor_unitario} para ${unitHist}`,
+      })
+    } else if (String(corrIdAtual) !== String(corretoraAtribuida)) {
       divergencias.push({
         id: d.id,
         ticker,
@@ -386,6 +463,8 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
 
     dividendosNormalizados.push({
       ...d,
+      valor: valorFinal,
+      valor_unitario: valorUnitFinal,
       corretora_id: idNum,
       corretoras: objCorretora ? { id: objCorretora.id, nome: objCorretora.nome, cor: objCorretora.cor } : d.corretoras,
     })
@@ -398,9 +477,10 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
     let atualizados = 0
     let erros = 0
 
-    // Separa divergências normais (reatribuição) das divisões
-    const reatribuicoes = divergencias.filter(d => d.tipo !== 'divisao')
+    // Separa divergências: reatribuição simples, divisões e calibrações de unitário
+    const reatribuicoes = divergencias.filter(d => !d.tipo || d.tipo === 'reatribuicao')
     const divsDivisao = divergencias.filter(d => d.tipo === 'divisao')
+    const calibracoes = divergencias.filter(d => d.tipo === 'calibracao_unitario')
 
     // 1. Reatribuições simples: atualiza corretora_id em lote
     const porDestino = new Map()
@@ -427,6 +507,34 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
       } catch (err) {
         console.error('Falha ao persistir reatribuição de dividendos:', err)
         erros += ids.length
+      }
+    }
+
+    // 2. Calibrações históricas: atualiza valor_unitario e valor recalculado no banco
+    for (const div of calibracoes) {
+      if (!div.id) continue
+      try {
+        const updateData = {
+          valor_unitario: div.valor_unitario_novo,
+          valor: div.valor_novo,
+        }
+        if (div.corretora_id_novo) {
+          updateData.corretora_id = div.corretora_id_novo
+        }
+        const { error } = await supabase
+          .from('dividendos')
+          .update(updateData)
+          .eq('id', div.id)
+
+        if (!error) {
+          atualizados++
+        } else {
+          console.error(`Erro ao calibrar dividendo histórico ${div.id}:`, error)
+          erros++
+        }
+      } catch (err) {
+        console.error(`Falha ao calibrar dividendo histórico ${div.id}:`, err)
+        erros++
       }
     }
 
