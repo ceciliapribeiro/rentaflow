@@ -253,12 +253,17 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
         const totalCustodia = comCustodia.reduce((s, c) => s + c.qtde, 0)
         const matchQtde = comCustodia.find(c => Math.abs(c.qtde - qtdeDiv) < 0.001)
 
-        // Verifica se a quantidade do dividendo cobre todas as corretoras
-        // (indica que o provento foi registrado consolidado e precisa ser dividido entre as corretoras)
-        const ehConsolidado = comCustodia.length > 1 && (
-          Boolean(proporcaoCustodia) ||
+        // Verifica se este registro já é um pedaço previamente dividido (ex: 'RENDIMENTO (Rico)')
+        const tipoStr = String(d.tipo_provento || '').trim()
+        const jaEhPedaco = /\(([^)]+)\)$/.test(tipoStr)
+
+        // Um provento só é consolidado (necessitando split) se:
+        // 1. NÃO bate individualmente com a quantidade de uma única corretora
+        // 2. NÃO é um pedaço previamente particionado com sufixo de corretora
+        // 3. Sua quantidade cobre o total acumulado das custódias das corretoras
+        const ehConsolidado = !matchQtde && !jaEhPedaco && (
           Math.abs(totalCustodia - qtdeDiv) < 0.01 ||
-          (qtdeDiv >= totalCustodia * 0.99 && qtdeDiv <= totalCustodia * 1.01) ||
+          (qtdeDiv >= totalCustodia * 0.98 && qtdeDiv <= totalCustodia * 1.02) ||
           (corrIdAtual && comCustodia.some(c => String(c.cId) === String(corrIdAtual) && qtdeDiv > c.qtde + 0.01))
         )
 
@@ -622,8 +627,27 @@ export function avaliarDividendosCorretora(dividendos, operacoes, corretoras) {
     return { atualizados, erros }
   }
 
+  // ─── DESDUPLICAÇÃO FINAL DE SEGURANÇA ───
+  // Garante que nenhum provento apareça duplicado na interface para o mesmo ticker, data, corretora e quantidade
+  const mapaUnicos = new Map()
+  const dividendosSemDuplicatas = []
+
+  for (const item of dividendosNormalizados) {
+    const tk = String(item.ticker || '').toUpperCase()
+    const dt = String(item.data_pagamento || item.data_ex || '').slice(0, 10)
+    const cId = item.corretora_id ? String(item.corretora_id) : 'sem_corretora'
+    const qt = Number(item.quantidade) || 0
+    const tp = String(item.tipo_provento || '').replace(/\s*\([^)]*\)/g, '').trim()
+    const chaveUnica = `${tk}_${dt}_${cId}_${qt}_${tp}`
+
+    if (!mapaUnicos.has(chaveUnica)) {
+      mapaUnicos.set(chaveUnica, item)
+      dividendosSemDuplicatas.push(item)
+    }
+  }
+
   return {
-    dividendosNormalizados,
+    dividendosNormalizados: dividendosSemDuplicatas,
     divergencias,
     estatisticas: {
       total: dividendos.length,
