@@ -23,7 +23,7 @@ function adicionarDiasUteis(dataStr, dias = 2) {
 // Ações ou Units de ações que não são FIIs (devem ser preservadas sem calibração histórica de FII)
 const NAO_FIIS = new Set([
   'VALE3', 'PETR4', 'ITUB4', 'BBAS3', 'BBDC4', 'CMIG4', 'CURY3', 'CXSE3',
-  'CYRE3', 'DIRR3', 'ISAE4', 'ITSA4', 'POMO4', 'RAIZ4', 'RECV3',
+  'CYRE3', 'DIRR3', 'ISAE4', 'ITSA4', 'POMO4', 'RAIZ4', 'RAIZ55', 'RECV3',
   'TAEE11', 'SAPR11', 'KLBN11', 'ALUP11', 'ENGI11', 'TIET11', 'BPAC11', 'SANB11'
 ])
 

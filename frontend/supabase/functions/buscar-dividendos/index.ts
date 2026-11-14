@@ -427,6 +427,14 @@ async function buscarProventos(
     return { proventos: fundamentus, fonte: 'Fundamentus' }
   }
 
+  // Fallback especial: se o ativo foi renomeado recentemente (ex: RAIZ55 -> RAIZ4)
+  if (ticker === 'RAIZ55') {
+    const provsAntigos = await buscarProventos('RAIZ4', ehFII)
+    if (provsAntigos.proventos.length > 0) {
+      return provsAntigos
+    }
+  }
+
   return { proventos: [], fonte: 'nenhuma' }
 }
 

@@ -430,6 +430,21 @@ async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData
         fontePreco = 'Yahoo'
       }
     }
+
+    // Fallback especial para RAIZ55: se provedor ainda usa o antigo RAIZ4
+    if (ticker === 'RAIZ55' && (!preco || preco <= 0)) {
+      const fbRaiz = await buscarFundamentus('RAIZ4')
+      if (fbRaiz.preco && fbRaiz.preco > 0) {
+        preco = fbRaiz.preco
+        fontePreco = 'Fundamentus (RAIZ4)'
+      }
+    }
+  }
+
+  // Fator de cotação da B3: RAIZ55 é cotado em lote de 100 ações na B3/Yahoo
+  // Se o preço retornado for do lote (ex: >= 3.00), converte para o preço unitário por ação
+  if (ticker === 'RAIZ55' && preco >= 3) {
+    preco = Number((preco / 100).toFixed(4))
   }
 
   // Se for FII/Fiagro e faltar DY ou PVP em StatusInvest, consulta Fundsexplorer
