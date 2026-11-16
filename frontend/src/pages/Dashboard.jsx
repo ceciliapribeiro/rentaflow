@@ -397,16 +397,14 @@ export default function Dashboard() {
 
     try {
       const tickers = consolidado.ativos.map(a => a.ticker)
-      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/atualizar-cotacoes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tickers }),
+      const { data: resultado, error } = await supabase.functions.invoke('atualizar-cotacoes', {
+        body: { tickers },
       })
 
-      const resultado = await response.json()
-      if (!response.ok) throw new Error(resultado.erro || 'Erro')
+      if (error) {
+        throw new Error(error.message || resultado?.erro || 'Falha ao atualizar cotações')
+      }
 
       setStatusCotacao({
         etapa: 'sucesso',
@@ -415,8 +413,8 @@ export default function Dashboard() {
       })
       await carregarDados()
     } catch (err) {
-      console.error('Erro ao atualizar:', err)
-      setStatusCotacao({ etapa: 'erro', mensagem: err.message })
+      console.error('Erro ao atualizar cotações:', err)
+      setStatusCotacao({ etapa: 'erro', mensagem: err.message || 'Erro ao conectar com serviço de cotações' })
     } finally {
       setAtualizandoCotacoes(false)
     }

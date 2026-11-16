@@ -109,15 +109,13 @@ export default function Dividendos() {
     setStatusAtualizacao({ etapa: 'iniciando', mensagem: 'Conectando à fonte de dados...' })
 
     try {
-      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/buscar-dividendos`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: user.id }),
+      const { data: resultado, error } = await supabase.functions.invoke('buscar-dividendos', {
+        body: { user_id: user.id },
       })
 
-      const resultado = await response.json()
-      if (!response.ok) throw new Error(resultado.erro || 'Erro desconhecido')
+      if (error) {
+        throw new Error(error.message || resultado?.erro || 'Erro ao buscar proventos')
+      }
 
       setStatusAtualizacao({
         etapa: 'sucesso',
@@ -127,7 +125,7 @@ export default function Dividendos() {
       await carregarDividendos()
     } catch (err) {
       console.error('Erro:', err)
-      setStatusAtualizacao({ etapa: 'erro', mensagem: err.message })
+      setStatusAtualizacao({ etapa: 'erro', mensagem: err.message || 'Erro ao conectar com serviço de proventos' })
     } finally {
       setAtualizando(false)
     }
