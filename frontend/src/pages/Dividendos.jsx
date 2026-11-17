@@ -109,12 +109,43 @@ export default function Dividendos() {
     setStatusAtualizacao({ etapa: 'iniciando', mensagem: 'Conectando à fonte de dados...' })
 
     try {
-      const { data: resultado, error } = await supabase.functions.invoke('buscar-dividendos', {
-        body: { user_id: user.id },
-      })
+      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://ovuvbgsrdrtwitotypsk.supabase.co'
+      const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_yaJCvKvSoaDAtqZl_xea1g_9M5iuyRh'
 
-      if (error) {
-        throw new Error(error.message || resultado?.erro || 'Erro ao buscar proventos')
+      let resultado = null
+
+      try {
+        const { data, error } = await supabase.functions.invoke('buscar-dividendos', {
+          body: { user_id: user.id },
+        })
+        if (!error && data) {
+          resultado = data
+        } else if (error) {
+          console.warn('invoke buscar-dividendos falhou, tentando fallback direto:', error)
+        }
+      } catch (invokeErr) {
+        console.warn('Erro ao chamar buscar-dividendos via invoke:', invokeErr)
+      }
+
+      if (!resultado) {
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/buscar-dividendos`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({ user_id: user.id }),
+        })
+        if (!response.ok) {
+          const errBody = await response.json().catch(() => ({}))
+          throw new Error(errBody.erro || `Erro HTTP ${response.status}`)
+        }
+        resultado = await response.json()
+      }
+
+      if (!resultado) {
+        throw new Error('Não foi possível obter resposta do serviço de proventos')
       }
 
       setStatusAtualizacao({

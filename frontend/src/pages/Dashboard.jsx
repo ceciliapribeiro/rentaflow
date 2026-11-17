@@ -9,7 +9,7 @@ import {
   RefreshCw, ArrowUpRight, ArrowDownRight,
   Upload, Zap, Database, Calculator, ChevronRight,
   ArrowUpDown, ChevronUp, ChevronDown, Building2,
-  Layers, Check, Filter
+  Layers, Check, Filter, AlertTriangle, AlertCircle, X
 } from 'lucide-react'
 import {
   PieChart as RechartsPieChart,
@@ -393,28 +393,82 @@ export default function Dashboard() {
       return
     }
     setAtualizandoCotacoes(true)
-    setStatusCotacao({ etapa: 'iniciando', mensagem: 'Buscando preços...' })
+    setStatusCotacao({ etapa: 'iniciando', mensagem: 'Buscando preços atualizados...' })
 
     try {
       const tickers = consolidado.ativos.map(a => a.ticker)
+      const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://ovuvbgsrdrtwitotypsk.supabase.co'
+      const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_yaJCvKvSoaDAtqZl_xea1g_9M5iuyRh'
 
-      const { data: resultado, error } = await supabase.functions.invoke('atualizar-cotacoes', {
-        body: { tickers },
-      })
+      let resultado = null
 
-      if (error) {
-        throw new Error(error.message || resultado?.erro || 'Falha ao atualizar cotações')
+      // Tentativa 1: supabase.functions.invoke
+      try {
+        const { data, error } = await supabase.functions.invoke('atualizar-cotacoes', {
+          body: { tickers },
+        })
+        if (!error && data) {
+          resultado = data
+        } else if (error) {
+          console.warn('supabase.functions.invoke falhou, tentando fallback direto:', error)
+        }
+      } catch (invokeErr) {
+        console.warn('Erro ao chamar Edge Function via invoke:', invokeErr)
       }
 
+      // Tentativa 2: Fallback direto via fetch HTTP caso invoke falhe
+      if (!resultado) {
+        const response = await fetch(`${SUPABASE_URL}/functions/v1/atualizar-cotacoes`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({ tickers }),
+        })
+        if (!response.ok) {
+          const errBody = await response.json().catch(() => ({}))
+          throw new Error(errBody.erro || `Erro HTTP ${response.status}`)
+        }
+        resultado = await response.json()
+      }
+
+      if (!resultado) {
+        throw new Error('Não foi possível obter resposta do serviço de cotações')
+      }
+
+      // Extrai lista detalhada de falhas para exibição clara na UI
+      const listaFalhas = (resultado.detalhes || [])
+        .filter(d => !d.preco || d.preco <= 0)
+        .map(d => ({
+          ticker: d.ticker,
+          motivo: d.erro || 'Sem cotação disponível',
+        }))
+
+      const temFalhas = (resultado.falhas > 0) || (listaFalhas.length > 0)
+
       setStatusCotacao({
-        etapa: 'sucesso',
-        mensagem: `${resultado.sucesso}/${resultado.total} atualizados (${resultado.comDY ?? 0} com DY, ${resultado.comPvp ?? 0} com P/VP) | ${resultado.falhas} falhas`,
+        etapa: temFalhas ? 'alerta' : 'sucesso',
+        mensagem: `${resultado.sucesso}/${resultado.total} atualizados (${resultado.comDY ?? 0} com DY, ${resultado.comPvp ?? 0} com P/VP) | ${resultado.falhas} falha(s)`,
+        sucesso: resultado.sucesso,
+        total: resultado.total,
+        falhas: resultado.falhas,
+        listaFalhas,
         detalhes: resultado,
       })
+
+      // Recarrega os dados para refletir na tabela imediatamente
       await carregarDados()
     } catch (err) {
       console.error('Erro ao atualizar cotações:', err)
-      setStatusCotacao({ etapa: 'erro', mensagem: err.message || 'Erro ao conectar com serviço de cotações' })
+      setStatusCotacao({
+        etapa: 'erro',
+        mensagem: err.message || 'Erro ao conectar com serviço de cotações',
+        listaFalhas: [],
+      })
+      // Tenta recarregar mesmo com erro caso algo tenha sido gravado parcialmente
+      await carregarDados().catch(() => {})
     } finally {
       setAtualizandoCotacoes(false)
     }
@@ -1062,12 +1116,66 @@ export default function Dashboard() {
           </div>
 
           {statusCotacao && (
-            <div className={`px-6 py-2 text-sm border-b ${
-              statusCotacao.etapa === 'erro' ? 'bg-red-50 text-red-700' :
-              statusCotacao.etapa === 'sucesso' ? 'bg-green-50 text-green-700' :
-              'bg-blue-50 text-blue-700'
+            <div className={`px-6 py-3 border-b text-sm transition-all ${
+              statusCotacao.etapa === 'erro'
+                ? 'bg-red-50 border-red-200 text-red-800'
+                : statusCotacao.etapa === 'alerta'
+                ? 'bg-amber-50 border-amber-200 text-amber-900'
+                : statusCotacao.etapa === 'sucesso'
+                ? 'bg-green-50 border-green-200 text-green-800'
+                : 'bg-blue-50 border-blue-200 text-blue-800'
             }`}>
-              Cotações: {statusCotacao.mensagem}
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  {statusCotacao.etapa === 'iniciando' && (
+                    <RefreshCw size={16} className="animate-spin text-blue-600 shrink-0" />
+                  )}
+                  {statusCotacao.etapa === 'sucesso' && (
+                    <Check size={16} className="text-green-600 shrink-0" />
+                  )}
+                  {statusCotacao.etapa === 'alerta' && (
+                    <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+                  )}
+                  {statusCotacao.etapa === 'erro' && (
+                    <AlertCircle size={16} className="text-red-600 shrink-0" />
+                  )}
+                  <span>
+                    <strong>Cotações:</strong> {statusCotacao.mensagem}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setStatusCotacao(null)}
+                  className="p-1 text-gray-400 hover:text-gray-700 rounded transition-colors"
+                  title="Fechar aviso"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              {statusCotacao.listaFalhas && statusCotacao.listaFalhas.length > 0 && (
+                <div className="mt-2.5 pt-2 border-t border-amber-200/70">
+                  <div className="flex items-center gap-1.5 font-semibold text-xs text-red-900 mb-1.5">
+                    <span>Ativos não atualizados ({statusCotacao.listaFalhas.length}):</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {statusCotacao.listaFalhas.map((f, idx) => (
+                      <span
+                        key={idx}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-100 text-red-800 border border-red-200 text-xs"
+                        title={f.motivo}
+                      >
+                        <span className="font-semibold">{f.ticker}</span>
+                        {f.motivo && (
+                          <span className="text-[10px] text-red-600 opacity-90 font-normal">
+                            ({f.motivo})
+                          </span>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

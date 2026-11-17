@@ -41,6 +41,11 @@ const UNITS_ACOES = new Set([
   'BPAC11', 'ENGI11', 'CPLE11', 'SULA11', 'BIDI11'
 ])
 
+// Mapeamento de tickers alternativos / renomeados
+const ALIASES: Record<string, string> = {
+  'ALLOS3': 'ALOS3',
+}
+
 // Fiagros conhecidos (no Status Invest ficam em /fiagros/)
 const FIAGROS = new Set([
   'SNAG11', 'VGIA11', 'KNCA11', 'RURA11', 'AAZQ11', 'XPCA11',
@@ -402,14 +407,15 @@ async function buscarYahoo(ticker: string): Promise<Partial<AtivoData>> {
 // 6) COMBINADOR INTELIGENTE — FIIs, Fiagros e Ações com suporte a DY e P/VP
 // ───────────────────────────────────────────────────────────
 async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData> {
-  const fii = ehFII(ticker)
+  const tickerConsulta = ALIASES[ticker] || ticker
+  const fii = ehFII(tickerConsulta)
   const tipo = fii ? 'FII' : 'Acao'
 
   // Consulta em paralelo: Brapi, Status Invest e Fundamentus
   const [brapi, statusInvest, fundamentus] = await Promise.all([
-    buscarBrapi(ticker, brapiToken),
-    buscarStatusInvest(ticker),
-    buscarFundamentus(ticker),
+    buscarBrapi(tickerConsulta, brapiToken),
+    buscarStatusInvest(tickerConsulta),
+    buscarFundamentus(tickerConsulta),
   ])
 
   // Preço: Brapi -> Fundamentus -> StatusInvest -> Yahoo
@@ -424,7 +430,7 @@ async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData
       preco = statusInvest.preco
       fontePreco = 'StatusInvest'
     } else {
-      const yahoo = await buscarYahoo(ticker)
+      const yahoo = await buscarYahoo(tickerConsulta)
       if (yahoo.preco && yahoo.preco > 0) {
         preco = yahoo.preco
         fontePreco = 'Yahoo'
@@ -432,7 +438,7 @@ async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData
     }
 
     // Fallback especial para RAIZ55: se provedor ainda usa o antigo RAIZ4
-    if (ticker === 'RAIZ55' && (!preco || preco <= 0)) {
+    if (tickerConsulta === 'RAIZ55' && (!preco || preco <= 0)) {
       const fbRaiz = await buscarFundamentus('RAIZ4')
       if (fbRaiz.preco && fbRaiz.preco > 0) {
         preco = fbRaiz.preco
@@ -443,14 +449,14 @@ async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData
 
   // Fator de cotação da B3: RAIZ55 é cotado em lote de 100 ações na B3/Yahoo
   // Se o preço retornado for do lote (ex: >= 3.00), converte para o preço unitário por ação
-  if (ticker === 'RAIZ55' && preco >= 3) {
+  if (tickerConsulta === 'RAIZ55' && preco >= 3) {
     preco = Number((preco / 100).toFixed(4))
   }
 
   // Se for FII/Fiagro e faltar DY ou PVP em StatusInvest, consulta Fundsexplorer
   let feData: Partial<AtivoData> = {}
   if (fii && ((!statusInvest.dy || statusInvest.dy <= 0) || (!statusInvest.pvp || statusInvest.pvp <= 0))) {
-    feData = await buscarFundsexplorer(ticker)
+    feData = await buscarFundsexplorer(tickerConsulta)
   }
 
   // DY: StatusInvest -> (se FII/Fiagro: Fundsexplorer) -> Fundamentus -> Brapi
@@ -480,7 +486,7 @@ async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData
   }
 
   if (!preco || preco <= 0) {
-    out.erro = brapi.erro || 'Sem preço'
+    out.erro = brapi.erro || fundamentus.erro || statusInvest.erro || 'Sem cotação disponível nas fontes'
   }
 
   return out
@@ -521,7 +527,7 @@ serve(async (req) => {
     const resultados: AtivoData[] = []
 
     // Paralelismo controlado para scraping
-    const PARALELO = 3
+    const PARALELO = 6
     for (let i = 0; i < tickersUp.length; i += PARALELO) {
       const lote = tickersUp.slice(i, i + PARALELO)
       const r = await Promise.all(
@@ -530,25 +536,29 @@ serve(async (req) => {
       resultados.push(...r)
 
       if (i + PARALELO < tickersUp.length) {
-        await new Promise((rs) => setTimeout(rs, 350))
+        await new Promise((rs) => setTimeout(rs, 150))
       }
     }
 
     // Grava no Supabase
-    const paraGravar = resultados
-      .filter((r) => r.preco > 0)
-      .map((r) => {
-        const obj: Record<string, any> = {
-          ticker: r.ticker,
-          preco: r.preco,
-          updated_at: new Date().toISOString(),
-        }
-        if (typeof r.dy === 'number' && r.dy > 0) obj.dy = r.dy
-        if (typeof r.pvp === 'number' && r.pvp > 0) obj.pvp = r.pvp
-        if (r.razao_social) obj.razao_social = r.razao_social
-        if (r.tipo) obj.tipo = r.tipo
-        return obj
-      })
+    const paraGravar: any[] = []
+    for (const r of resultados.filter((r) => r.preco > 0)) {
+      const obj: Record<string, any> = {
+        ticker: r.ticker,
+        preco: r.preco,
+        updated_at: new Date().toISOString(),
+      }
+      if (typeof r.dy === 'number' && r.dy > 0) obj.dy = r.dy
+      if (typeof r.pvp === 'number' && r.pvp > 0) obj.pvp = r.pvp
+      if (r.razao_social) obj.razao_social = r.razao_social
+      if (r.tipo) obj.tipo = r.tipo
+      paraGravar.push(obj)
+
+      // Se ticker foi consultado via alias, grava também sob o ticker de alias
+      if (ALIASES[r.ticker]) {
+        paraGravar.push({ ...obj, ticker: ALIASES[r.ticker] })
+      }
+    }
 
     let gravados = 0
     if (paraGravar.length > 0) {
