@@ -328,8 +328,14 @@ async function buscarFundsexplorer(ticker: string): Promise<Partial<AtivoData>> 
 async function buscarBrapi(ticker: string, token: string): Promise<AtivoData> {
   const out: AtivoData = { ticker, preco: 0 }
   try {
-    const url = `https://brapi.dev/api/quote/${ticker}?token=${token}&modules=defaultKeyStatistics,financialData`
-    const r = await fetch(url, { headers: { 'Accept': 'application/json' } })
+    let url = `https://brapi.dev/api/quote/${ticker}?token=${token}&modules=defaultKeyStatistics,financialData`
+    let r = await fetch(url, { headers: { 'Accept': 'application/json' } })
+
+    // Se módulos forem recusados (ex: 403 Forbidden em planos free ou 400), tenta cotação simples
+    if (!r.ok && (r.status === 403 || r.status === 400)) {
+      url = `https://brapi.dev/api/quote/${ticker}?token=${token}`
+      r = await fetch(url, { headers: { 'Accept': 'application/json' } })
+    }
 
     if (!r.ok) {
       out.erro = `Brapi HTTP ${r.status}`
@@ -370,7 +376,7 @@ async function buscarBrapi(ticker: string, token: string): Promise<AtivoData> {
 }
 
 // ───────────────────────────────────────────────────────────
-// 5) YAHOO FINANCE — fallback para preço
+// 5) YAHOO FINANCE — Cotações em tempo real da B3 (.SA)
 // ───────────────────────────────────────────────────────────
 async function buscarYahoo(ticker: string): Promise<Partial<AtivoData>> {
   const out: Partial<AtivoData> = {}
@@ -396,9 +402,15 @@ async function buscarYahoo(ticker: string): Promise<Partial<AtivoData>> {
         out.preco = Number(preco)
         out.fontePreco = 'Yahoo'
       }
+      if (meta?.shortName || meta?.longName) {
+        out.razao_social = meta?.longName || meta?.shortName
+      }
+    } else {
+      out.erro = `Yahoo HTTP ${r.status}`
     }
     return out
-  } catch {
+  } catch (e) {
+    out.erro = `Yahoo: ${String(e).slice(0, 50)}`
     return out
   }
 }
@@ -411,37 +423,44 @@ async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData
   const fii = ehFII(tickerConsulta)
   const tipo = fii ? 'FII' : 'Acao'
 
-  // Consulta em paralelo: Brapi, Status Invest e Fundamentus
-  const [brapi, statusInvest, fundamentus] = await Promise.all([
+  // Consulta em paralelo: cotações em tempo real (Yahoo, Brapi) e dados fundamentalistas (StatusInvest, Fundamentus)
+  const [yahoo, brapi, statusInvest, fundamentus] = await Promise.all([
+    buscarYahoo(tickerConsulta),
     buscarBrapi(tickerConsulta, brapiToken),
     buscarStatusInvest(tickerConsulta),
     buscarFundamentus(tickerConsulta),
   ])
 
-  // Preço: Brapi -> Fundamentus -> StatusInvest -> Yahoo
-  let preco = brapi.preco || 0
-  let fontePreco = brapi.fontePreco
+  // PREÇO: PRIORIDADE MÁXIMA PARA FONTES EM TEMPO REAL (Yahoo Finance / Brapi)
+  // Fundamentus e StatusInvest são mantidos apenas como fallback caso as fontes em tempo real falhem,
+  // pois Fundamentus reflete apenas o fechamento anterior ou dados diários defasados.
+  let preco = 0
+  let fontePreco = ''
 
-  if (!preco || preco <= 0) {
-    if (fundamentus.preco && fundamentus.preco > 0) {
-      preco = fundamentus.preco
-      fontePreco = 'Fundamentus'
-    } else if (statusInvest.preco && statusInvest.preco > 0) {
-      preco = statusInvest.preco
-      fontePreco = 'StatusInvest'
+  if (yahoo.preco && yahoo.preco > 0) {
+    preco = yahoo.preco
+    fontePreco = 'Yahoo'
+  } else if (brapi.preco && brapi.preco > 0) {
+    preco = brapi.preco
+    fontePreco = 'Brapi'
+  } else if (statusInvest.preco && statusInvest.preco > 0) {
+    preco = statusInvest.preco
+    fontePreco = 'StatusInvest'
+  } else if (fundamentus.preco && fundamentus.preco > 0) {
+    preco = fundamentus.preco
+    fontePreco = 'Fundamentus'
+  }
+
+  // Fallback especial para RAIZ55: se provedor ainda usa o antigo RAIZ4
+  if (tickerConsulta === 'RAIZ55' && (!preco || preco <= 0)) {
+    const fbRaiz = await buscarYahoo('RAIZ4')
+    if (fbRaiz.preco && fbRaiz.preco > 0) {
+      preco = fbRaiz.preco
+      fontePreco = 'Yahoo (RAIZ4)'
     } else {
-      const yahoo = await buscarYahoo(tickerConsulta)
-      if (yahoo.preco && yahoo.preco > 0) {
-        preco = yahoo.preco
-        fontePreco = 'Yahoo'
-      }
-    }
-
-    // Fallback especial para RAIZ55: se provedor ainda usa o antigo RAIZ4
-    if (tickerConsulta === 'RAIZ55' && (!preco || preco <= 0)) {
-      const fbRaiz = await buscarFundamentus('RAIZ4')
-      if (fbRaiz.preco && fbRaiz.preco > 0) {
-        preco = fbRaiz.preco
+      const fbRaizF = await buscarFundamentus('RAIZ4')
+      if (fbRaizF.preco && fbRaizF.preco > 0) {
+        preco = fbRaizF.preco
         fontePreco = 'Fundamentus (RAIZ4)'
       }
     }
@@ -471,7 +490,7 @@ async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData
     ? statusInvest.fontePvp
     : (fii && feData.pvp ? feData.fontePvp : (fundamentus.pvp ? fundamentus.fontePvp : (brapi.pvp ? brapi.fontePvp : feData.fontePvp)))
 
-  const razao_social = brapi.razao_social || fundamentus.razao_social || undefined
+  const razao_social = yahoo.razao_social || brapi.razao_social || fundamentus.razao_social || undefined
 
   const out: AtivoData = {
     ticker,
@@ -486,7 +505,7 @@ async function buscarTudo(ticker: string, brapiToken: string): Promise<AtivoData
   }
 
   if (!preco || preco <= 0) {
-    out.erro = brapi.erro || fundamentus.erro || statusInvest.erro || 'Sem cotação disponível nas fontes'
+    out.erro = yahoo.erro || brapi.erro || fundamentus.erro || statusInvest.erro || 'Sem cotação disponível nas fontes'
   }
 
   return out
