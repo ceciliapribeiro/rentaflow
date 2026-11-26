@@ -12,6 +12,7 @@ import {
 import { formatBRL, formatData } from '../utils/formatters'
 import { useToast, useConfirm } from '../contexts/ToastContext'
 import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
+import SortableTh from '../components/SortableTh'
 import { avaliarDividendosCorretora } from '../utils/avaliarDividendosCorretora'
 
 export default function Dividendos() {
@@ -254,17 +255,52 @@ export default function Dividendos() {
       })
   }, [dividendosFiltrados])
 
+  // Ordenação
+  const [sortConfig, setSortConfig] = useState({ key: 'data_pagamento', direction: 'desc' })
+  const handleSort = (key) => {
+    setSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+    }))
+  }
+
+  const dividendosOrdenados = useMemo(() => {
+    const lista = [...dividendosFiltrados]
+    const { key, direction } = sortConfig
+    lista.sort((a, b) => {
+      let valA, valB
+      if (key === 'corretora') {
+        valA = a.corretoras?.nome || ''
+        valB = b.corretoras?.nome || ''
+      } else {
+        valA = a[key]
+        valB = b[key]
+      }
+
+      if (['quantidade', 'valor_unitario', 'valor'].includes(key)) {
+        valA = Number(valA) || 0
+        valB = Number(valB) || 0
+        return direction === 'asc' ? valA - valB : valB - valA
+      }
+
+      const strA = String(valA ?? '')
+      const strB = String(valB ?? '')
+      return direction === 'asc' ? strA.localeCompare(strB) : strB.localeCompare(strA)
+    })
+    return lista
+  }, [dividendosFiltrados, sortConfig])
+
   // Paginação
-  const totalPaginas = Math.ceil(dividendosFiltrados.length / POR_PAGINA)
+  const totalPaginas = Math.ceil(dividendosOrdenados.length / POR_PAGINA)
   const dividendosPagina = useMemo(() => {
     const inicio = (paginaAtual - 1) * POR_PAGINA
-    return dividendosFiltrados.slice(inicio, inicio + POR_PAGINA)
-  }, [dividendosFiltrados, paginaAtual])
+    return dividendosOrdenados.slice(inicio, inicio + POR_PAGINA)
+  }, [dividendosOrdenados, paginaAtual])
 
-  // Reset paginação ao mudar filtros
+  // Reset paginação ao mudar filtros ou ordenação
   useEffect(() => {
     setPaginaAtual(1)
-  }, [filtroAno, filtroTipo, filtroTicker, corretoraSelecionada])
+  }, [filtroAno, filtroTipo, filtroTicker, corretoraSelecionada, sortConfig])
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -436,15 +472,15 @@ export default function Dividendos() {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b">
                     <tr className="text-left text-gray-600">
-                      <th className="py-2 px-3">Data Pagamento</th>
-                      <th className="py-2 px-3">Data EX</th>
-                      <th className="py-2 px-3">Ticker</th>
-                      <th className="py-2 px-3">Tipo</th>
-                      <th className="py-2 px-3 text-right">Qtde</th>
-                      <th className="py-2 px-3 text-right">Valor Unit.</th>
-                      <th className="py-2 px-3 text-right">Valor Total</th>
-                      <th className="py-2 px-3">Corretora</th>
-                      <th className="py-2 px-3">Fonte</th>
+                      <SortableTh label="Data Pagamento" sortKey="data_pagamento" currentSort={sortConfig} onSort={handleSort} />
+                      <SortableTh label="Data EX" sortKey="data_ex" currentSort={sortConfig} onSort={handleSort} />
+                      <SortableTh label="Ticker" sortKey="ticker" currentSort={sortConfig} onSort={handleSort} />
+                      <SortableTh label="Tipo" sortKey="tipo_provento" currentSort={sortConfig} onSort={handleSort} />
+                      <SortableTh label="Qtde" sortKey="quantidade" currentSort={sortConfig} onSort={handleSort} align="right" />
+                      <SortableTh label="Valor Unit." sortKey="valor_unitario" currentSort={sortConfig} onSort={handleSort} align="right" />
+                      <SortableTh label="Valor Total" sortKey="valor" currentSort={sortConfig} onSort={handleSort} align="right" />
+                      <SortableTh label="Corretora" sortKey="corretora" currentSort={sortConfig} onSort={handleSort} />
+                      <SortableTh label="Fonte" sortKey="fonte" currentSort={sortConfig} onSort={handleSort} />
                     </tr>
                   </thead>
                   <tbody>

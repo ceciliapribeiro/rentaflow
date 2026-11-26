@@ -15,6 +15,7 @@ import { formatBRL } from '../utils/formatters'
 import { calcularPosicoes, inferirTipo, tickersAtivos as getTickers } from '../utils/calcularPosicoes'
 import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
 import { avaliarDividendosCorretora } from '../utils/avaliarDividendosCorretora'
+import SortableTh from '../components/SortableTh'
 
 const CORES_TIPO = {
   FII:   '#7c3aed',
@@ -186,6 +187,36 @@ export default function Patrimonio() {
       .map(a => ({ ...a, pct: totalPat > 0 ? (a.valor_efetivo / totalPat) * 100 : 0 }))
       .sort((a, b) => b.valor_efetivo - a.valor_efetivo)
   }, [posicoes, ativosBD, distribPorTicker])
+
+  const [sortConfig, setSortConfig] = useState({ key: 'valor_efetivo', direction: 'desc' })
+
+  const handleSort = (key) => {
+    setSortConfig(prev => {
+      if (prev?.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+      }
+      return { key, direction: ['ticker', 'tipo', 'razao_social', 'corretora'].includes(key) ? 'asc' : 'desc' }
+    })
+  }
+
+  const ativosOrdenados = useMemo(() => {
+    if (!sortConfig) return listaAtivos
+    return [...listaAtivos].sort((a, b) => {
+      if (sortConfig.key === 'corretora') {
+        const strA = (a.distribCorretoras || []).map(c => c.nome).join(', ')
+        const strB = (b.distribCorretoras || []).map(c => c.nome).join(', ')
+        return sortConfig.direction === 'asc' ? strA.localeCompare(strB) : strB.localeCompare(strA)
+      }
+      if (['ticker', 'tipo', 'razao_social'].includes(sortConfig.key)) {
+        const valA = String(a[sortConfig.key] || '')
+        const valB = String(b[sortConfig.key] || '')
+        return sortConfig.direction === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA)
+      }
+      const numA = Number(a[sortConfig.key]) || 0
+      const numB = Number(b[sortConfig.key]) || 0
+      return sortConfig.direction === 'asc' ? numA - numB : numB - numA
+    })
+  }, [listaAtivos, sortConfig])
 
   const patrimonio = useMemo(() => listaAtivos.reduce((s, a) => s + a.valor_efetivo, 0), [listaAtivos])
   const totalAportado = useMemo(() => aportesFiltrados.reduce((s, a) => s + Number(a.valor || 0), 0), [aportesFiltrados])
@@ -552,20 +583,22 @@ export default function Patrimonio() {
                 <table className="w-full text-sm">
                   <thead className="bg-gray-50 border-b">
                     <tr className="text-gray-600 text-left">
-                      <th className="py-2 px-3">Ticker</th>
-                      <th className="py-2 px-3">Tipo</th>
-                      {ehConsolidado && <th className="py-2 px-3">Corretora(s)</th>}
-                      <th className="py-2 px-3 text-right">Qtde</th>
-                      <th className="py-2 px-3 text-right">Preço Médio</th>
-                      <th className="py-2 px-3 text-right">Preço Atual</th>
-                      <th className="py-2 px-3 text-right">Valor Atual</th>
-                      <th className="py-2 px-3 text-right">Variação</th>
-                      <th className="py-2 px-3 text-right">Peso</th>
+                      <SortableTh label="Ticker" sortKey="ticker" sortConfig={sortConfig} onSort={handleSort} align="left" />
+                      <SortableTh label="Tipo" sortKey="tipo" sortConfig={sortConfig} onSort={handleSort} align="left" />
+                      {ehConsolidado && (
+                        <SortableTh label="Corretora(s)" sortKey="corretora" sortConfig={sortConfig} onSort={handleSort} align="left" />
+                      )}
+                      <SortableTh label="Qtde" sortKey="quantidade" sortConfig={sortConfig} onSort={handleSort} align="right" />
+                      <SortableTh label="Preço Médio" sortKey="preco_medio" sortConfig={sortConfig} onSort={handleSort} align="right" />
+                      <SortableTh label="Preço Atual" sortKey="preco_atual" sortConfig={sortConfig} onSort={handleSort} align="right" />
+                      <SortableTh label="Valor Atual" sortKey="valor_efetivo" sortConfig={sortConfig} onSort={handleSort} align="right" />
+                      <SortableTh label="Variação" sortKey="variacao" sortConfig={sortConfig} onSort={handleSort} align="right" />
+                      <SortableTh label="Peso" sortKey="pct" sortConfig={sortConfig} onSort={handleSort} align="right" />
                       <th className="py-2 px-3 min-w-[80px]">Barra</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {listaAtivos.map(a => (
+                    {ativosOrdenados.map(a => (
                       <tr key={a.ticker} className="border-b hover:bg-gray-50">
                         <td className="py-2 px-3">
                           <div className="font-semibold text-blue-700">{a.ticker}</div>

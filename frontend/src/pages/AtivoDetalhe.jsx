@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import { formatBRL, formatData } from '../utils/formatters'
 import Header from '../components/Header'
+import SortableTh from '../components/SortableTh'
 import { avaliarDividendosCorretora } from '../utils/avaliarDividendosCorretora'
 
 export default function AtivoDetalhe() {
@@ -218,17 +219,88 @@ export default function AtivoDetalhe() {
     }
   }, [ehConsolidado, corretoraSelecionada, resumoConsolidado, porCorretora])
 
-  // Operações filtradas
+  // Operações filtradas e ordenadas
+  const [sortOperacoes, setSortOperacoes] = useState({ key: 'data', direction: 'desc' })
+  const handleSortOperacoes = (key) => {
+    setSortOperacoes(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+    }))
+  }
+
   const operacoesFiltradas = useMemo(() => {
     if (ehConsolidado) return todasOperacoes
     return todasOperacoes.filter(op => String(op.corretora_id) === String(corretoraSelecionada))
   }, [ehConsolidado, corretoraSelecionada, todasOperacoes])
 
-  // Dividendos filtrados
+  const operacoesOrdenadas = useMemo(() => {
+    const lista = [...operacoesFiltradas]
+    const { key, direction } = sortOperacoes
+    lista.sort((a, b) => {
+      let valA, valB
+      if (key === 'total') {
+        valA = (Number(a.quantidade) || 0) * (Number(a.preco_unitario) || 0)
+        valB = (Number(b.quantidade) || 0) * (Number(b.preco_unitario) || 0)
+      } else if (key === 'corretora') {
+        valA = a.corretoras?.nome || ''
+        valB = b.corretoras?.nome || ''
+      } else {
+        valA = a[key]
+        valB = b[key]
+      }
+
+      if (['quantidade', 'preco_unitario', 'total'].includes(key)) {
+        valA = Number(valA) || 0
+        valB = Number(valB) || 0
+        return direction === 'asc' ? valA - valB : valB - valA
+      }
+
+      const strA = String(valA ?? '')
+      const strB = String(valB ?? '')
+      return direction === 'asc' ? strA.localeCompare(strB) : strB.localeCompare(strA)
+    })
+    return lista
+  }, [operacoesFiltradas, sortOperacoes])
+
+  // Dividendos filtrados e ordenados
+  const [sortDividendos, setSortDividendos] = useState({ key: 'data_pagamento', direction: 'desc' })
+  const handleSortDividendos = (key) => {
+    setSortDividendos(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+    }))
+  }
+
   const dividendosFiltrados = useMemo(() => {
     if (ehConsolidado) return todosDividendos
     return todosDividendos.filter(d => String(d.corretora_id) === String(corretoraSelecionada))
   }, [ehConsolidado, corretoraSelecionada, todosDividendos])
+
+  const dividendosOrdenados = useMemo(() => {
+    const lista = [...dividendosFiltrados]
+    const { key, direction } = sortDividendos
+    lista.sort((a, b) => {
+      let valA, valB
+      if (key === 'corretora') {
+        valA = a.corretoras?.nome || ''
+        valB = b.corretoras?.nome || ''
+      } else {
+        valA = a[key]
+        valB = b[key]
+      }
+
+      if (['quantidade', 'valor_unitario', 'valor'].includes(key)) {
+        valA = Number(valA) || 0
+        valB = Number(valB) || 0
+        return direction === 'asc' ? valA - valB : valB - valA
+      }
+
+      const strA = String(valA ?? '')
+      const strB = String(valB ?? '')
+      return direction === 'asc' ? strA.localeCompare(strB) : strB.localeCompare(strA)
+    })
+    return lista
+  }, [dividendosFiltrados, sortDividendos])
 
   if (loading) {
     return (
@@ -539,18 +611,18 @@ export default function AtivoDetalhe() {
                 {aba === 'operacoes' ? (
                   operacoesFiltradas.length > 0 ? (
                     <table className="w-full text-sm">
-                      <thead className="bg-gray-50">
-                        <tr className="border-b text-gray-500 text-left">
-                          <th className="py-2 px-3">Data</th>
-                          <th className="py-2 px-3">Op</th>
-                          <th className="py-2 px-3 text-right">Qtde</th>
-                          <th className="py-2 px-3 text-right">Preço</th>
-                          <th className="py-2 px-3 text-right">Total</th>
-                          <th className="py-2 px-3">Corretora</th>
+                      <thead className="bg-gray-50 border-b">
+                        <tr className="text-gray-600 text-left">
+                          <SortableTh label="Data" sortKey="data" currentSort={sortOperacoes} onSort={handleSortOperacoes} />
+                          <SortableTh label="Op" sortKey="operacao" currentSort={sortOperacoes} onSort={handleSortOperacoes} />
+                          <SortableTh label="Qtde" sortKey="quantidade" currentSort={sortOperacoes} onSort={handleSortOperacoes} align="right" />
+                          <SortableTh label="Preço" sortKey="preco_unitario" currentSort={sortOperacoes} onSort={handleSortOperacoes} align="right" />
+                          <SortableTh label="Total" sortKey="total" currentSort={sortOperacoes} onSort={handleSortOperacoes} align="right" />
+                          <SortableTh label="Corretora" sortKey="corretora" currentSort={sortOperacoes} onSort={handleSortOperacoes} />
                         </tr>
                       </thead>
                       <tbody>
-                        {operacoesFiltradas.map(op => (
+                        {operacoesOrdenadas.map(op => (
                           <tr key={op.id} className="border-b hover:bg-gray-50">
                             <td className="py-2 px-3">{formatData(op.data)}</td>
                             <td className="py-2 px-3">
@@ -585,19 +657,19 @@ export default function AtivoDetalhe() {
                   )
                 ) : dividendosFiltrados.length > 0 ? (
                   <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr className="border-b text-gray-500 text-left">
-                        <th className="py-2 px-3">Pagamento</th>
-                        <th className="py-2 px-3">Data EX</th>
-                        <th className="py-2 px-3">Tipo</th>
-                        <th className="py-2 px-3 text-right">Qtde</th>
-                        <th className="py-2 px-3 text-right">Valor unit.</th>
-                        <th className="py-2 px-3 text-right">Total</th>
-                        <th className="py-2 px-3">Corretora</th>
+                    <thead className="bg-gray-50 border-b">
+                      <tr className="text-gray-600 text-left">
+                        <SortableTh label="Pagamento" sortKey="data_pagamento" currentSort={sortDividendos} onSort={handleSortDividendos} />
+                        <SortableTh label="Data EX" sortKey="data_ex" currentSort={sortDividendos} onSort={handleSortDividendos} />
+                        <SortableTh label="Tipo" sortKey="tipo_provento" currentSort={sortDividendos} onSort={handleSortDividendos} />
+                        <SortableTh label="Qtde" sortKey="quantidade" currentSort={sortDividendos} onSort={handleSortDividendos} align="right" />
+                        <SortableTh label="Valor unit." sortKey="valor_unitario" currentSort={sortDividendos} onSort={handleSortDividendos} align="right" />
+                        <SortableTh label="Total" sortKey="valor" currentSort={sortDividendos} onSort={handleSortDividendos} align="right" />
+                        <SortableTh label="Corretora" sortKey="corretora" currentSort={sortDividendos} onSort={handleSortDividendos} />
                       </tr>
                     </thead>
                     <tbody>
-                      {dividendosFiltrados.map(d => (
+                      {dividendosOrdenados.map(d => (
                         <tr key={d.id} className="border-b hover:bg-gray-50">
                           <td className="py-2 px-3">{formatData(d.data_pagamento)}</td>
                           <td className="py-2 px-3 text-gray-600">{formatData(d.data_ex)}</td>

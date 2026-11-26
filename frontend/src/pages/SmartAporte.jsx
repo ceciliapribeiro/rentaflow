@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
@@ -10,6 +10,7 @@ import { formatBRL } from '../utils/formatters'
 import { useCorretora } from '../contexts/CorretoraContext'
 import Header from '../components/Header'
 import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
+import SortableTh from '../components/SortableTh'
 
 export default function SmartAporte() {
   const navigate = useNavigate()
@@ -28,6 +29,57 @@ export default function SmartAporte() {
   const [resultado, setResultado] = useState(null)
   const [erro, setErro] = useState(null)
   const [tab, setTab] = useState('compras')
+
+  const [sortCompras, setSortCompras] = useState({ key: 'valor', direction: 'desc' })
+  const [sortAnalise, setSortAnalise] = useState({ key: 'score_compra', direction: 'desc' })
+
+  const handleSortCompras = (key) => {
+    setSortCompras(prev => {
+      if (prev?.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+      }
+      return { key, direction: ['ticker', 'tipo'].includes(key) ? 'asc' : 'desc' }
+    })
+  }
+
+  const handleSortAnalise = (key) => {
+    setSortAnalise(prev => {
+      if (prev?.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+      }
+      return { key, direction: ['ticker', 'tipo'].includes(key) ? 'asc' : 'desc' }
+    })
+  }
+
+  const comprasOrdenadas = useMemo(() => {
+    if (!resultado?.compras) return []
+    if (!sortCompras) return resultado.compras
+    return [...resultado.compras].sort((a, b) => {
+      if (['ticker', 'tipo'].includes(sortCompras.key)) {
+        return sortCompras.direction === 'asc'
+          ? String(a[sortCompras.key] || '').localeCompare(String(b[sortCompras.key] || ''))
+          : String(b[sortCompras.key] || '').localeCompare(String(a[sortCompras.key] || ''))
+      }
+      const valA = Number(a[sortCompras.key]) || 0
+      const valB = Number(b[sortCompras.key]) || 0
+      return sortCompras.direction === 'asc' ? valA - valB : valB - valA
+    })
+  }, [resultado?.compras, sortCompras])
+
+  const ativosAnaliseOrdenados = useMemo(() => {
+    if (!resultado?.ativos) return []
+    if (!sortAnalise) return resultado.ativos
+    return [...resultado.ativos].sort((a, b) => {
+      if (['ticker', 'tipo'].includes(sortAnalise.key)) {
+        return sortAnalise.direction === 'asc'
+          ? String(a[sortAnalise.key] || '').localeCompare(String(b[sortAnalise.key] || ''))
+          : String(b[sortAnalise.key] || '').localeCompare(String(a[sortAnalise.key] || ''))
+      }
+      const valA = Number(a[sortAnalise.key]) || 0
+      const valB = Number(b[sortAnalise.key]) || 0
+      return sortAnalise.direction === 'asc' ? valA - valB : valB - valA
+    })
+  }, [resultado?.ativos, sortAnalise])
 
   const [todasOperacoesBrutas, setTodasOperacoesBrutas] = useState([])
   const [carteiraBruta, setCarteiraBruta] = useState([])
@@ -277,17 +329,17 @@ const handleCalcular = async () => {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b text-gray-500">
-                          <th className="py-2 text-left">Ticker</th>
-                          <th className="py-2 text-center">Tipo</th>
-                          <th className="py-2 text-right">Cotas</th>
-                          <th className="py-2 text-right">Preço</th>
-                          <th className="py-2 text-right">Total</th>
-                          <th className="py-2 text-right">DY</th>
-                          <th className="py-2 text-right">P/VP</th>
+                          <SortableTh label="Ticker" sortKey="ticker" sortConfig={sortCompras} onSort={handleSortCompras} align="left" />
+                          <SortableTh label="Tipo" sortKey="tipo" sortConfig={sortCompras} onSort={handleSortCompras} align="center" />
+                          <SortableTh label="Cotas" sortKey="cotas" sortConfig={sortCompras} onSort={handleSortCompras} align="right" />
+                          <SortableTh label="Preço" sortKey="preco" sortConfig={sortCompras} onSort={handleSortCompras} align="right" />
+                          <SortableTh label="Total" sortKey="valor" sortConfig={sortCompras} onSort={handleSortCompras} align="right" />
+                          <SortableTh label="DY" sortKey="dy" sortConfig={sortCompras} onSort={handleSortCompras} align="right" />
+                          <SortableTh label="P/VP" sortKey="pvp" sortConfig={sortCompras} onSort={handleSortCompras} align="right" />
                         </tr>
                       </thead>
                       <tbody>
-                        {resultado.compras.map((c, i) => (
+                        {comprasOrdenadas.map((c, i) => (
                           <tr key={i} className="border-b hover:bg-gray-50">
                             <td className="py-2 font-medium">{c.ticker}</td>
                             <td className="py-2 text-center">
@@ -370,20 +422,20 @@ const handleCalcular = async () => {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b text-gray-500">
-                        <th className="py-2 text-left">Ticker</th>
-                        <th className="py-2 text-center">Tipo</th>
-                        <th className="py-2 text-right">Qtde</th>
-                        <th className="py-2 text-right">Valor atual</th>
-                        <th className="py-2 text-right">Peso real</th>
-                        <th className="py-2 text-right">Peso alvo</th>
-                        <th className="py-2 text-right">Défice</th>
-                        <th className="py-2 text-right">DY</th>
-                        <th className="py-2 text-right">P/VP</th>
-                        <th className="py-2 text-right">Score</th>
+                        <SortableTh label="Ticker" sortKey="ticker" sortConfig={sortAnalise} onSort={handleSortAnalise} align="left" />
+                        <SortableTh label="Tipo" sortKey="tipo" sortConfig={sortAnalise} onSort={handleSortAnalise} align="center" />
+                        <SortableTh label="Qtde" sortKey="quantidade" sortConfig={sortAnalise} onSort={handleSortAnalise} align="right" />
+                        <SortableTh label="Valor atual" sortKey="valor_atual" sortConfig={sortAnalise} onSort={handleSortAnalise} align="right" />
+                        <SortableTh label="Peso real" sortKey="peso_real" sortConfig={sortAnalise} onSort={handleSortAnalise} align="right" />
+                        <SortableTh label="Peso alvo" sortKey="peso_alvo" sortConfig={sortAnalise} onSort={handleSortAnalise} align="right" />
+                        <SortableTh label="Défice" sortKey="defice" sortConfig={sortAnalise} onSort={handleSortAnalise} align="right" />
+                        <SortableTh label="DY" sortKey="dy" sortConfig={sortAnalise} onSort={handleSortAnalise} align="right" />
+                        <SortableTh label="P/VP" sortKey="pvp" sortConfig={sortAnalise} onSort={handleSortAnalise} align="right" />
+                        <SortableTh label="Score" sortKey="score_compra" sortConfig={sortAnalise} onSort={handleSortAnalise} align="right" />
                       </tr>
                     </thead>
                     <tbody>
-                      {resultado.ativos.map((a, i) => (
+                      {ativosAnaliseOrdenados.map((a, i) => (
                         <tr key={i} className="border-b hover:bg-gray-50">
                           <td className="py-2 font-medium">{a.ticker}</td>
                           <td className="py-2 text-center">

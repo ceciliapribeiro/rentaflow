@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '../contexts/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
@@ -10,6 +10,7 @@ import { useToast, useConfirm } from '../contexts/ToastContext'
 import { useCorretora } from '../contexts/CorretoraContext'
 import Header from '../components/Header'
 import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
+import SortableTh from '../components/SortableTh'
 
 export default function Operacoes() {
   const { user } = useAuth()
@@ -172,6 +173,15 @@ export default function Operacoes() {
   }
 
 
+  // Ordenação
+  const [sortConfig, setSortConfig] = useState({ key: 'data', direction: 'desc' })
+  const handleSort = (key) => {
+    setSortConfig(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'asc' ? 'desc' : 'asc'
+    }))
+  }
+
   // Filtros
   const opsFiltradas = operacoes.filter(op => {
     if (corretoraSelecionada !== 'todas' && String(op.corretora_id) !== String(corretoraSelecionada)) return false
@@ -179,6 +189,35 @@ export default function Operacoes() {
     if (filtroTicker && !op.ticker.toLowerCase().includes(filtroTicker.toLowerCase())) return false
     return true
   })
+
+  const opsOrdenadas = useMemo(() => {
+    const lista = [...opsFiltradas]
+    const { key, direction } = sortConfig
+    lista.sort((a, b) => {
+      let valA, valB
+      if (key === 'total') {
+        valA = (Number(a.quantidade) || 0) * (Number(a.preco_unitario) || 0)
+        valB = (Number(b.quantidade) || 0) * (Number(b.preco_unitario) || 0)
+      } else if (key === 'corretora') {
+        valA = a.corretoras?.nome || ''
+        valB = b.corretoras?.nome || ''
+      } else {
+        valA = a[key]
+        valB = b[key]
+      }
+
+      if (['quantidade', 'preco_unitario', 'total'].includes(key)) {
+        valA = Number(valA) || 0
+        valB = Number(valB) || 0
+        return direction === 'asc' ? valA - valB : valB - valA
+      }
+
+      const strA = String(valA ?? '')
+      const strB = String(valB ?? '')
+      return direction === 'asc' ? strA.localeCompare(strB) : strB.localeCompare(strA)
+    })
+    return lista
+  }, [opsFiltradas, sortConfig])
 
   // Totais
   const totalCompras = opsFiltradas.filter(o => o.operacao === 'COMPRA')
@@ -378,18 +417,18 @@ export default function Operacoes() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b">
                   <tr className="text-left text-gray-600">
-                    <th className="py-2 px-3">Data</th>
-                    <th className="py-2 px-3">Ticker</th>
-                    <th className="py-2 px-3">Operação</th>
-                    <th className="py-2 px-3 text-right">Qtde</th>
-                    <th className="py-2 px-3 text-right">Preço</th>
-                    <th className="py-2 px-3 text-right">Total</th>
-                    <th className="py-2 px-3">Corretora</th>
+                    <SortableTh label="Data" sortKey="data" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableTh label="Ticker" sortKey="ticker" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableTh label="Operação" sortKey="operacao" currentSort={sortConfig} onSort={handleSort} />
+                    <SortableTh label="Qtde" sortKey="quantidade" currentSort={sortConfig} onSort={handleSort} align="right" />
+                    <SortableTh label="Preço" sortKey="preco_unitario" currentSort={sortConfig} onSort={handleSort} align="right" />
+                    <SortableTh label="Total" sortKey="total" currentSort={sortConfig} onSort={handleSort} align="right" />
+                    <SortableTh label="Corretora" sortKey="corretora" currentSort={sortConfig} onSort={handleSort} />
                     <th className="py-2 px-3 text-center">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {opsFiltradas.map(op => {
+                  {opsOrdenadas.map(op => {
                     const total = Number(op.quantidade) * Number(op.preco_unitario)
                     return (
                       <tr key={op.id} className="border-b hover:bg-gray-50">

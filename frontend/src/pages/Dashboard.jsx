@@ -605,6 +605,11 @@ export default function Dashboard() {
             ? String(a[sortConfig.key] || '').localeCompare(String(b[sortConfig.key] || ''))
             : String(b[sortConfig.key] || '').localeCompare(String(a[sortConfig.key] || ''))
         }
+        if (sortConfig.key === 'corretoras') {
+          const strA = (a.distribCorretoras || []).map(c => c.nome).join(', ')
+          const strB = (b.distribCorretoras || []).map(c => c.nome).join(', ')
+          return sortConfig.direction === 'asc' ? strA.localeCompare(strB) : strB.localeCompare(strA)
+        }
         const valA = Number(a[sortConfig.key]) || 0
         const valB = Number(b[sortConfig.key]) || 0
         return sortConfig.direction === 'asc' ? valA - valB : valB - valA
@@ -1331,6 +1336,21 @@ export default function Dashboard() {
                       return normalizarTipo(a.tipo, a.ticker) === tipoFiltro
                     })
                     if (ativosFiltradosCorr.length === 0) return null
+
+                    const sortedAtivosCorr = [...ativosFiltradosCorr]
+                    if (sortConfig !== null) {
+                      sortedAtivosCorr.sort((a, b) => {
+                        if (sortConfig.key === 'ticker' || sortConfig.key === 'tipo' || sortConfig.key === 'razao_social') {
+                          return sortConfig.direction === 'asc'
+                            ? String(a[sortConfig.key] || '').localeCompare(String(b[sortConfig.key] || ''))
+                            : String(b[sortConfig.key] || '').localeCompare(String(a[sortConfig.key] || ''))
+                        }
+                        const valA = Number(a[sortConfig.key]) || 0
+                        const valB = Number(b[sortConfig.key]) || 0
+                        return sortConfig.direction === 'asc' ? valA - valB : valB - valA
+                      })
+                    }
+
                     return (
                       <div key={corr.id} className="p-4 bg-gray-50/60">
                         <div className="flex items-center justify-between mb-3 px-2">
@@ -1354,20 +1374,20 @@ export default function Dashboard() {
                           <table className="w-full text-sm">
                             <thead className="bg-gray-50 border-b text-gray-600">
                               <tr>
-                                <th className="py-2 px-3 text-left">Ticker</th>
-                                <th className="py-2 px-3 text-left">Tipo</th>
-                                <th className="py-2 px-3 text-right">Qtde</th>
-                                <th className="py-2 px-3 text-right">Preço Médio</th>
-                                <th className="py-2 px-3 text-right">Preço Atual</th>
-                                <th className="py-2 px-3 text-right">Valor Atual</th>
-                                <th className="py-2 px-3 text-right">% Subtotal</th>
-                                <th className="py-2 px-3 text-right">DY</th>
-                                <th className="py-2 px-3 text-right">P/VP</th>
-                                <th className="py-2 px-3 text-right">Variação</th>
+                                <HeaderCell label="Ticker" sortKey="ticker" />
+                                <HeaderCell label="Tipo" sortKey="tipo" />
+                                <HeaderCell label="Qtde" sortKey="quantidade" align="right" />
+                                <HeaderCell label="Preço Médio" sortKey="preco_medio" align="right" />
+                                <HeaderCell label="Preço Atual" sortKey="preco_atual" align="right" />
+                                <HeaderCell label="Valor Atual" sortKey="valor_atual" align="right" />
+                                <HeaderCell label="% Subtotal" sortKey="porcentagem" align="right" />
+                                <HeaderCell label="DY" sortKey="dy" align="right" />
+                                <HeaderCell label="P/VP" sortKey="pvp" align="right" />
+                                <HeaderCell label="Variação" sortKey="variacao" align="right" />
                               </tr>
                             </thead>
                             <tbody>
-                              {ativosFiltradosCorr.map(a => (
+                              {sortedAtivosCorr.map(a => (
                                 <tr
                                   key={a.ticker}
                                   onClick={() => navigate(`/ativo/${a.ticker}`)}
@@ -1426,7 +1446,7 @@ export default function Dashboard() {
                       <tr className="text-gray-600">
                         <HeaderCell label="Ticker" sortKey="ticker" />
                         <HeaderCell label="Tipo" sortKey="tipo" />
-                        {ehConsolidado && <th className="py-2 px-3 text-left">Corretoras</th>}
+                        {ehConsolidado && <HeaderCell label="Corretoras" sortKey="corretoras" />}
                         <HeaderCell label="Qtde" sortKey="quantidade" align="right" />
                         <HeaderCell label="Preço médio" sortKey="preco_medio" align="right" />
                         <HeaderCell label="Preço atual" sortKey="preco_atual" align="right" />

@@ -13,6 +13,7 @@ import { useToast } from '../contexts/ToastContext'
 import { useConfirm } from '../contexts/ToastContext'
 import { useCorretora } from '../contexts/CorretoraContext'
 import BarraFiltroCorretora from '../components/BarraFiltroCorretora'
+import SortableTh from '../components/SortableTh'
 
 export default function Aportes() {
   const { user } = useAuth()
@@ -165,6 +166,45 @@ export default function Aportes() {
       return true
     })
   }, [aportes, filtroAno, corretoraSelecionada])
+
+  const [sortConfig, setSortConfig] = useState({ key: 'data', direction: 'desc' })
+
+  const handleSort = (key) => {
+    setSortConfig(prev => {
+      if (prev?.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+      }
+      return { key, direction: ['data', 'valor'].includes(key) ? 'desc' : 'asc' }
+    })
+  }
+
+  const aportesOrdenados = useMemo(() => {
+    if (!sortConfig) return aportesFiltrados
+    return [...aportesFiltrados].sort((a, b) => {
+      let valA = a[sortConfig.key]
+      let valB = b[sortConfig.key]
+
+      if (sortConfig.key === 'corretora') {
+        valA = a.corretoras?.nome || ''
+        valB = b.corretoras?.nome || ''
+        return sortConfig.direction === 'asc'
+          ? String(valA).localeCompare(String(valB))
+          : String(valB).localeCompare(String(valA))
+      }
+
+      if (sortConfig.key === 'descricao' || sortConfig.key === 'data') {
+        valA = String(valA || '')
+        valB = String(valB || '')
+        return sortConfig.direction === 'asc'
+          ? valA.localeCompare(valB)
+          : valB.localeCompare(valA)
+      }
+
+      const numA = Number(valA) || 0
+      const numB = Number(valB) || 0
+      return sortConfig.direction === 'asc' ? numA - numB : numB - numA
+    })
+  }, [aportesFiltrados, sortConfig])
 
   // Totais (considerando a corretora selecionada, se houver)
   const aportesDaCorretora = useMemo(() => {
@@ -423,15 +463,15 @@ export default function Aportes() {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b">
                   <tr className="text-left text-gray-600">
-                    <th className="py-2 px-3">Data</th>
-                    <th className="py-2 px-3 text-right">Valor</th>
-                    <th className="py-2 px-3">Corretora</th>
-                    <th className="py-2 px-3">Descrição</th>
+                    <SortableTh label="Data" sortKey="data" sortConfig={sortConfig} onSort={handleSort} align="left" />
+                    <SortableTh label="Valor" sortKey="valor" sortConfig={sortConfig} onSort={handleSort} align="right" />
+                    <SortableTh label="Corretora" sortKey="corretora" sortConfig={sortConfig} onSort={handleSort} align="left" />
+                    <SortableTh label="Descrição" sortKey="descricao" sortConfig={sortConfig} onSort={handleSort} align="left" />
                     <th className="py-2 px-3 text-center">Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {aportesFiltrados.map(ap => (
+                  {aportesOrdenados.map(ap => (
                     <tr key={ap.id} className="border-b hover:bg-gray-50">
                       <td className="py-2 px-3">{formatData(ap.data)}</td>
                       <td className="py-2 px-3 text-right font-medium text-green-700">
